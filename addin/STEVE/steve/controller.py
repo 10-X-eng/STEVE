@@ -181,6 +181,8 @@ class Controller:
         self.turn_id = None
         self._turn_revision = 0
         self._runtime_status = None
+        self._pending_job_resume = None
+        self._job_control_revision = 0
         self._transcript_key = None
         self._transcript_end = None
         self.default_model = None
@@ -206,7 +208,7 @@ class Controller:
         self.state = {"connection": "starting", "provider": self.provider_choice.provider, "account": None, "models": [], "model": "",
                       "effort": "", "effortOptions": [], "defaultEffort": "", "preferenceNotice": "",
                       "taskDocument": None, "waitingForFusion": False, "waitingReason": "",
-                      "job": None, "jobBusy": False, "jobNotice": "", "jobHasTarget": False,
+                      "job": None, "jobBusy": False, "jobNotice": "", "jobHasTarget": False, "jobResumePending": False,
                       "messages": [], "busy": False, "loginPending": False, "device": None,
                       "accountChecked": False, "localStatus": "", "providerVersion": "", "error": "", "status": "Checking your account", "version": VERSION,
                       "ollamaHost": self.ollama.host, "ollamaPort": self.ollama.port, "ollamaAddress": self.ollama.label,
@@ -383,6 +385,10 @@ class Controller:
                 return False
             if self.state["codexRestarting"] and action not in ("sync", "debugLogging", "openLogs", "setupHelp"):
                 return False
+            if action == "stop":
+                self._job_control_revision += 1
+                self._pending_job_resume = None
+                self.state["jobResumePending"] = False
             if action == "restartRuntime":
                 if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self.state["loginPending"]
                         or self.state["codexUpdating"] or self.state["connection"] == "starting"):
@@ -407,16 +413,27 @@ class Controller:
                 if self.state["jobBusy"]:
                     return False
                 if command in ("set", "resume"):
-                    if self.state["busy"] or self._send_queued:
-                        raise ValueError("Pause the current task before creating, editing, or resuming a job.")
+                    running = self.state["busy"] or self._send_queued
+                    if command == "set" and running:
+                        raise ValueError("Pause the current task before creating or editing a job.")
                     if command == "resume" and not self.state["job"]:
                         raise ValueError("No job to resume. Use /jobs <objective> to create one.")
-                    if capture_context:
+                    if command == "resume":
+                        if self.state["job"]["status"] == "active" or self.state["jobResumePending"]:
+                            return True
+                        payload["resumeRevision"] = self._job_control_revision
+                        payload["resumeWhileBusy"] = bool(running)
+                    if capture_context and not running:
                         target = self._job_contexts.get((self.state["provider"], self.thread_id)) if command == "resume" else None
                         capture = "resume:" + target["task_key"] if target and target.get("task_key") else "send"
                         payload["fusionContext"] = capture_context(capture)
-                    self._cancel = False
-                    self._send_queued = True
+                    if not running:
+                        self._cancel = False
+                        self._send_queued = True
+                if command in ("pause", "clear", "set"):
+                    self._job_control_revision += 1
+                    self._pending_job_resume = None
+                    self.state["jobResumePending"] = False
                 if command in ("pause", "clear") and self.state["job"]:
                     self._cancel = True
                     if self.fusion_tools and hasattr(self.fusion_tools, "wake"):
@@ -979,6 +996,8 @@ class Controller:
 
     def _job_action(self, payload):
         command = payload["command"]
+        if command == "resume" and payload.get("resumeRevision", self._job_control_revision) != self._job_control_revision:
+            return  # Stop/Pause/Clear supersedes an earlier Resume click.
         if command in ("status", "help", "edit"):
             if self.thread_id:
                 self._job_rpc("get")
@@ -998,10 +1017,30 @@ class Controller:
             finally:
                 self._interrupt_turn()
             return
-        if self.state["busy"]:
-            raise ValueError("Pause the current task before changing the job.")
         if command == "resume" and (not self.state["job"] or self.state["job"]["status"] == "complete"):
             raise ValueError("Create a new job to start more work; this job is complete or missing.")
+        if command == "resume" and payload.get("resumeWhileBusy"):
+            with self._lock:
+                if payload["resumeRevision"] != self._job_control_revision:
+                    return
+                target = self._job_contexts.get((self.state["provider"], self.thread_id)) or {}
+                current = self._task_context or {}
+                same_target = bool(target.get("task_key") and target["task_key"] == current.get("task_key"))
+                if self._cancel or not same_target:
+                    # Restoring Fusion's saved selection/document mutates its tool binding.
+                    # Do that on the main thread, only after the current work is idle.
+                    self._pending_job_resume = (self.state["provider"], self.thread_id,
+                                                self.state["job"]["objective"], payload)
+                    self.state["jobResumePending"] = True
+                    self.emit()
+                    return
+            params = {"status": "active"}
+            if "tokenBudget" in payload:
+                params["tokenBudget"] = payload["tokenBudget"]
+            self._job_rpc("set", params)
+            return  # Native goal activation does not start a competing turn.
+        if self.state["busy"]:
+            raise ValueError("Pause the current task before changing the job.")
         context = manufacturing_context(payload.get("fusionContext"), self.dfm.enabled, self.state['rmfgState'])
         self._task_context = context
         self.state.update(taskDocument={"id": context.get("document_id"), "name": context.get("name")} if context else None,
@@ -1048,6 +1087,33 @@ class Controller:
             with self._lock:
                 if not self.turn_id:
                     self._set_job_state(self.state["job"])
+            self.emit()
+
+    def resume_pending_job(self, capture_context):
+        """Called by the Fusion state event; never rebind a running tool's target."""
+        with self._lock:
+            pending = self._pending_job_resume
+            if not pending or self._closed:
+                return
+            provider, thread, objective, payload = pending
+            job = self.state["job"]
+            if (provider != self.state["provider"] or thread != self.thread_id or not job
+                    or payload["resumeRevision"] != self._job_control_revision
+                    or objective != job["objective"] or job["status"] in ("active", "complete")):
+                self._pending_job_resume = None
+                self.state["jobResumePending"] = False
+                self.emit()
+                return
+            if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self._active_tools
+                    or self.state["connection"] != "ready"):
+                return
+            self._pending_job_resume = None
+            self.state["jobResumePending"] = False
+            try:
+                self.dispatch("job", {key: value for key, value in payload.items()
+                                      if key in ("command", "tokenBudget")}, capture_context=capture_context)
+            except Exception as exc:
+                self.state["error"] = str(exc)
             self.emit()
 
     def _tool_request(self, client, request_id, method, params):
@@ -1508,6 +1574,8 @@ class Controller:
                 else:
                     self.state.update(error=params.get("error") or "Sign-in was not completed.", status="Sign in to begin")
             elif method == "steve/disconnected":
+                self._pending_job_resume = None
+                self.state["jobResumePending"] = False
                 self._active_tools.clear()
                 self._finish_code_activity()
                 self.state.update(connection="disconnected", busy=False, waitingForFusion=False, loginPending=False,

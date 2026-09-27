@@ -1,5 +1,6 @@
 """Job lifecycle at STEVE's controller boundary, including automatic turns."""
 import copy
+import threading
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -15,12 +16,15 @@ class JobClient(FakeClient):
         super().__init__(notify)
         self.job = None
         self.turn_number = 0
+        self.turn_active = False
 
     def start_job_turn(self):
+        self.turn_active = True
         self.turn_number += 1
         self.notify("turn/started", {"threadId": "thread-1", "turn": {"id": f"job-turn-{self.turn_number}"}})
 
     def complete(self, status="completed"):
+        self.turn_active = False
         self.notify("turn/completed", {"threadId": "thread-1", "turn": {
             "id": f"job-turn-{self.turn_number}", "status": status}})
 
@@ -42,7 +46,7 @@ class JobClient(FakeClient):
         self.job.update({k: v for k, v in params.items() if k in ("status", "tokenBudget")})
         result = copy.deepcopy(self.job)
         self.notify("thread/goal/updated", {"threadId": params["threadId"], "goal": copy.deepcopy(self.job)})
-        if self.job["status"] == "active":
+        if self.job["status"] == "active" and not self.turn_active:
             self.start_job_turn()
         return {"goal": result}
 
@@ -67,6 +71,156 @@ class JobTests(unittest.TestCase):
     def create(self):
         self.controller.dispatch("send", {"text": "/jobs Make a bracket and verify its dimensions"}, capture_context=self.capture)
         eventually(lambda: self.controller.turn_id == "job-turn-1" and not self.controller.state["jobBusy"])
+
+    def pause_goal_without_interrupting(self):
+        self.client.job['status'] = 'paused'
+        self.client.notify('thread/goal/updated', {'threadId':'thread-1','goal':copy.deepcopy(self.client.job)})
+
+    def test_resume_running_tool_activates_goal_without_rebinding_or_new_turn(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        pending = []
+        class Fusion:
+            def submit(self, tool, args, complete, cancelled):
+                pending.append((complete, cancelled))
+        self.controller.fusion_tools = Fusion()
+        self.client.on_request('tool', 'item/tool/call', {'threadId':'thread-1','turnId':'job-turn-1',
+            'tool':'fusion_inspect_document','arguments':{}})
+        context = copy.deepcopy(self.controller._task_context)
+        start = len(self.client.calls)
+        self.controller.dispatch('steer', {'text':'/jobs resume'}, capture_context=lambda _: self.fail('Must not rebind a running tool'))
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertEqual(self.client.job['status'], 'active')
+        self.assertEqual(self.controller.turn_id, 'job-turn-1')
+        self.assertEqual(self.controller._task_context, context)
+        self.assertFalse(pending[0][1]())
+        self.assertEqual([m for m, _ in self.client.calls[start:]], ['thread/goal/set'])
+        pending[0][0]({'ok':True})
+        self.client.complete()
+        self.assertTrue(self.controller.state['busy'])
+        self.client.start_job_turn()
+        self.assertEqual(self.controller.turn_id, 'job-turn-2')
+
+    def test_resume_different_target_waits_then_restores_original_binding_and_budget(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._task_context = {'task_key':'binding-b','document_id':'doc-b'}
+        self.controller.state['taskDocument'] = {'id':'doc-b','name':'Other'}
+        self.controller.dispatch('job', {'command':'resume','tokenBudget':1200}, capture_context=self.capture)
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertTrue(self.controller.state['jobResumePending'])
+        self.controller.resume_pending_job(self.capture)
+        self.assertEqual(self.captures, ['send'])
+        self.assertEqual(self.controller._task_context['task_key'], 'binding-b')
+        self.assertEqual(self.client.job['status'], 'paused')
+        self.client.complete()
+        self.controller.resume_pending_job(self.capture)
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertEqual(self.controller.turn_id, 'job-turn-2')
+        self.assertEqual(self.captures, ['send', 'resume:binding-a'])
+        self.assertEqual(self.controller.state['taskDocument']['id'], 'doc-a')
+        self.assertEqual(self.client.job['tokenBudget'], 1200)
+        self.assertFalse(self.controller.state['jobResumePending'])
+
+    def test_resume_while_stopping_preserves_cancellation_until_idle(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._cancel = True
+        self.controller.dispatch('job', {'command':'resume'}, capture_context=self.capture)
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertTrue(self.controller._cancel)
+        self.assertTrue(self.controller.state['jobResumePending'])
+        self.client.complete('interrupted')
+        self.controller.resume_pending_job(self.capture)
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertFalse(self.controller._cancel)
+        self.assertEqual(self.client.job['status'], 'active')
+
+    def test_stop_cancels_deferred_resume(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._task_context = {'task_key':'binding-b'}
+        self.controller.dispatch('job', {'command':'resume'})
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.controller.dispatch('stop')
+        eventually(lambda: not self.controller.state['busy'])
+        self.controller.resume_pending_job(self.capture)
+        self.assertFalse(self.controller.state['jobResumePending'])
+        self.assertEqual(self.client.job['status'], 'paused')
+        self.assertEqual(self.client.turn_number, 1)
+
+    def test_deferred_resume_closed_target_reports_error_without_activation(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._task_context = {'task_key':'binding-b'}
+        self.controller.dispatch('job', {'command':'resume'})
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.client.complete()
+        def closed(_):
+            raise ValueError('The original document is closed')
+        self.controller.resume_pending_job(closed)
+        self.assertIn('original document is closed', self.controller.state['error'])
+        self.assertEqual(self.client.job['status'], 'paused')
+        self.assertFalse(self.controller.state['jobResumePending'])
+
+    def test_failed_active_resume_preserves_turn_and_paused_job(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.client.fail_method = 'thread/goal/set'
+        self.controller.dispatch('job', {'command':'resume'})
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertEqual(self.controller.turn_id, 'job-turn-1')
+        self.assertTrue(self.controller.state['busy'])
+        self.assertFalse(self.controller._cancel)
+        self.assertEqual(self.client.job['status'], 'paused')
+        self.assertIn('Job service unavailable', self.controller.state['error'])
+
+    def test_stop_supersedes_a_resume_waiting_on_the_controller_worker(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        entered, release = threading.Event(), threading.Event()
+        original = self.controller._job_action
+        def held(payload):
+            entered.set()
+            release.wait(2)
+            return original(payload)
+        start = len(self.client.calls)
+        with patch.object(self.controller, '_job_action', side_effect=held):
+            self.controller.dispatch('job', {'command':'resume'})
+            self.assertTrue(entered.wait(1))
+            self.controller.dispatch('stop')
+            release.set()
+            eventually(lambda: not self.controller.state['jobBusy'] and not self.controller.state['busy'])
+        self.assertFalse(any(m == 'thread/goal/set' and p.get('status') == 'active' for m, p in self.client.calls[start:]))
+        self.assertEqual(self.client.job['status'], 'paused')
+
+    def test_fusion_state_event_delivers_deferred_resume_even_with_palette_closed(self):
+        from test_clipboard_bridge import load_entry
+        from types import SimpleNamespace
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._task_context = {'task_key':'binding-b'}
+        self.controller.dispatch('job', {'command':'resume'})
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.client.complete()
+        entry = load_entry()
+        entry._controller = self.controller
+        entry._fusion_tools = SimpleNamespace(message_context=self.capture)
+        entry._pending_state = self.controller.snapshot()
+        entry.StateEvent().notify(None)
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.assertEqual(self.captures[-1], 'resume:binding-a')
+        self.assertEqual(self.controller.turn_id, 'job-turn-2')
+
+    def test_disconnect_drops_pending_resume(self):
+        self.create()
+        self.pause_goal_without_interrupting()
+        self.controller._task_context = {'task_key':'binding-b'}
+        self.controller.dispatch('job', {'command':'resume'})
+        eventually(lambda: not self.controller.state['jobBusy'])
+        self.client.notify('steve/disconnected', {'message':'Fixture disconnected'})
+        self.assertFalse(self.controller.state['jobResumePending'])
+        self.assertIsNone(self.controller._pending_job_resume)
 
     def test_commands_and_validation(self):
         for word in ("pause", "resume", "clear", "edit", "help", "status"):
@@ -193,8 +347,11 @@ class JobTests(unittest.TestCase):
                 self.controller.state['busy'] = False
                 self.controller.turn_id = None
                 self.client.turn_number = 0
+                self.client.turn_active = False
                 self.create()
-                idle = lambda: self.client.notify('thread/status/changed', {'threadId':'thread-1','status':{'type':'idle'}})
+                def idle():
+                    self.client.turn_active = False
+                    self.client.notify('thread/status/changed', {'threadId':'thread-1','status':{'type':'idle'}})
                 if idle_first:
                     idle()
                     self.assertTrue(self.controller.state['busy'])  # Active jobs still continue.

@@ -102,6 +102,19 @@ class JobRuntimeTests(unittest.TestCase):
                     controller.dispatch("job", {"command": "resume", "tokenBudget": None},
                         capture_context=lambda _: {"document_id": "fixture", "name": "Fixture bracket", "task_key": "fixture-key"})
                     eventually(lambda: fusion.pending is not None and not controller.state["jobBusy"], 10)
+                    # Pause only the goal, leaving a real dynamic-tool call in flight.
+                    controller._job_rpc('set', {'status':'paused'})
+                    turn = controller.turn_id
+                    request_count = len(requests)
+                    event_count = sum(m == 'turn/started' for m, _ in events)
+                    controller.dispatch('job', {'command':'resume'},
+                        capture_context=lambda _: self.fail('Mid-turn resume must not rebind Fusion'))
+                    eventually(lambda: not controller.state['jobBusy'], 10)
+                    self.assertEqual(controller.state['job']['status'], 'active')
+                    self.assertEqual(controller.turn_id, turn)
+                    self.assertEqual(len(requests), request_count)
+                    self.assertEqual(sum(m == 'turn/started' for m, _ in events), event_count)
+                    self.assertFalse(fusion.pending[1]())
                     controller.dispatch("stop")
                     idle(controller, "paused")
                     self.assertIsNone(controller.state["job"]["tokenBudget"])

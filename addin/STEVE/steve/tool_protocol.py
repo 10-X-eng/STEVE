@@ -213,11 +213,15 @@ Fusion API quick reference:
   root.features.extrudeFeatures.addSimple(sketch.profiles.item(0), value, FeatureOperations.NewBodyFeatureOperation).
 - Faces are adsk.fusion.BRepFace. Planar: face.geometry.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType.
   Outward normal: face.evaluator.getNormalAtPoint(face.pointOnFace)[1]. Pick faces by normal and position.
-- Sketch on a face with root.sketches.addWithoutEdges(face); sketches.add(face) projects its edges into
-  extra profiles. Face sketch axes differ from model axes, so convert points with sketch.modelToSketchSpace(point).
-- From a face sketch, positive distance goes outward (Join adds a boss) and negative goes into the body
-  (Cut makes a pocket). "No target body found to cut" means the cut points away from the body. Through
-  hole: input = extrudeFeatures.createInput(profile, CutFeatureOperation); input.setAllExtent(ExtentDirections.NegativeExtentDirection).
+- Pocket on a face; copy this pattern (half = half the pocket width in cm):
+    sketch = root.sketches.addWithoutEdges(face)  # sketches.add(face) adds the face edges as extra profiles
+    c = sketch.modelToSketchSpace(model_point)    # face sketch axes differ from model axes
+    sketch.sketchCurves.sketchLines.addCenterPointRectangle(c, adsk.core.Point3D.create(c.x + half, c.y + half, c.z))
+    root.features.extrudeFeatures.addSimple(sketch.profiles.item(0), adsk.core.ValueInput.createByString('-1 in'),
+                                            adsk.fusion.FeatureOperations.CutFeatureOperation)
+  Negative distance cuts into the body; positive goes outward (use Join for a boss). "No target body found
+  to cut" means the cut points away from the body. Through hole: input = extrudeFeatures.createInput(profile,
+  CutFeatureOperation); input.setAllExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection).
 - Fillet: filletFeatures.createInput().edgeSetInputs.addConstantRadiusEdgeSet(edges, value, True). Chamfer:
   chamferFeatures.createInput2().chamferEdgeSets.addEqualDistanceChamferEdgeSet(edges, value, True).
   Edges around a pocket or hole opening: the face's loops where not loop.isOuter.

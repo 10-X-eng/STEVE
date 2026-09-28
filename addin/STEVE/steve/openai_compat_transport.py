@@ -11,6 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from .ollama_transport import normalize_api_key
 from .openrouter_auth import EFFORTS
 from .secure_store import SecureStore
+from .tool_protocol import FUSION_QUICK_REFERENCE
 from .transport import Transport, data_home
 
 PROVIDER = "steve_openai_compat"
@@ -236,7 +237,7 @@ class OpenAICompatTransport(Transport):
                 raise OpenAICompatError("The server lists no models. Load a model, then choose Refresh models.")
             params["model"] = model
             params.setdefault("config", {}).update(self.config(model))
-            params["baseInstructions"] = params.get("baseInstructions", "") + "\nThis is an OpenAI-compatible server session. Web search is unavailable. Use fusion_api_help and fusion_fetch_docs for Fusion API documentation."
+            params["baseInstructions"] = params.get("baseInstructions", "") + "\nThis is an OpenAI-compatible server session. Web search is unavailable. Use fusion_api_help and fusion_fetch_docs for Fusion API documentation." + FUSION_QUICK_REFERENCE
             result = super().request(method, params, **kwargs)
             self.threads[result["thread"]["id"]] = (model, self._signature())
             return result

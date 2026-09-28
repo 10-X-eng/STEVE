@@ -200,6 +200,29 @@ If no assembly design is open, create one only as needed for the requested assem
 application mode, inspect the new document, then insert in a separate modeling operation.""",
 }
 
+# Appended for local and OpenAI-compatible models, which miss these points in the full prompt.
+# Each recipe was run in Fusion; keep it short and verified.
+FUSION_QUICK_REFERENCE = """
+Fusion API quick reference:
+- API lengths are always centimeters, even when the document shows inches or mm. Feature
+  sizes: adsk.core.ValueInput.createByString('3 in'). Point3D and sketch coordinates: convert
+  (1 in = 2.54 cm) or use context['helpers'].evaluate('3 in', 'in'). Convert measurements
+  back before checking or reporting, and label verification units truthfully.
+- Box: sketch = root.sketches.add(root.xYConstructionPlane);
+  sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2);
+  root.features.extrudeFeatures.addSimple(sketch.profiles.item(0), value, FeatureOperations.NewBodyFeatureOperation).
+- Faces are adsk.fusion.BRepFace. Planar: face.geometry.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType.
+  Outward normal: face.evaluator.getNormalAtPoint(face.pointOnFace)[1]. Pick faces by normal and position.
+- Sketch on a face with root.sketches.addWithoutEdges(face); sketches.add(face) projects its edges into
+  extra profiles. Face sketch axes differ from model axes, so convert points with sketch.modelToSketchSpace(point).
+- From a face sketch, positive distance goes outward (Join adds a boss) and negative goes into the body
+  (Cut makes a pocket). "No target body found to cut" means the cut points away from the body. Through
+  hole: input = extrudeFeatures.createInput(profile, CutFeatureOperation); input.setAllExtent(ExtentDirections.NegativeExtentDirection).
+- Fillet: filletFeatures.createInput().edgeSetInputs.addConstantRadiusEdgeSet(edges, value, True). Chamfer:
+  chamferFeatures.createInput2().chamferEdgeSets.addEqualDistanceChamferEdgeSet(edges, value, True).
+  Edges around a pocket or hole opening: the face's loops where not loop.isOuter.
+"""
+
 PYTHON_CONTEXT = (
     "Define def run(context); STEVE calls it once on Fusion's main thread with fresh globals. "
     "Context: app, data, ui, document, product, products (by productType), design, root, units, "

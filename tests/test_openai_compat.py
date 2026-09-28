@@ -116,6 +116,7 @@ class OpenAICompatTests(unittest.TestCase):
                 self.assertEqual(config[f"model_providers.{PROVIDER}.env_key"], API_KEY_ENV)
                 self.assertEqual((config["model_context_window"], config["model_auto_compact_token_limit"]), (65536, 52428))
                 self.assertNotIn("sk-secret", json.dumps(rpc.call_args.args[1]))
+                self.assertIn("API lengths are always centimeters", rpc.call_args.args[1]["baseInstructions"])
                 client.request("turn/start", {"threadId": "t", "input": []})
                 self.assertEqual(rpc.call_args.args[0], "turn/start")  # Unchanged server: no resume.
                 settings.save("http://10.0.0.5:8000/v1", clear_api_key=True)

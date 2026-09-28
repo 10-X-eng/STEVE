@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 
 from .secure_store import SecureStore
+from .tool_protocol import FUSION_QUICK_REFERENCE
 from .transport import Transport, data_home
 
 BASE_URL = "http://127.0.0.1:11434"
@@ -467,7 +468,7 @@ class OllamaTransport(Transport):
             prepared = self.api.prepare(model)
             params["model"] = model
             params.setdefault("config", {}).update(self.provider_config(prepared))
-            params["baseInstructions"] = params.get("baseInstructions", "") + "\nThis is a local Ollama session. Web search is unavailable. Use fusion_api_help for installed Fusion API documentation. Keep tool results small."
+            params["baseInstructions"] = params.get("baseInstructions", "") + "\nThis is a local Ollama session. Web search is unavailable. Use fusion_api_help for installed Fusion API documentation. Keep tool results small." + FUSION_QUICK_REFERENCE
             result = super().request(method, params, **kwargs)
             self._remember(result["thread"]["id"], prepared)
             return result

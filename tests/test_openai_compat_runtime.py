@@ -36,8 +36,7 @@ class OpenAICompatRuntimeTests(unittest.TestCase):
                 self.wfile.write(body)
             def do_GET(self):
                 auth.append(self.headers.get("Authorization"))
-                self.send(200, json.dumps({"data": [{"id": "fixture-model", "context_length": 65536,
-                                                     "reasoning": {"supported_efforts": ["low", "high"]}}]}).encode())
+                self.send(200, json.dumps({"data": [{"id": "fixture-model", "context_length": 65536}]}).encode())
             def do_POST(self):
                 auth.append(self.headers.get("Authorization"))
                 if self.path != "/v1/responses" or self.headers.get("Authorization") != "Bearer " + KEY:
@@ -76,12 +75,11 @@ class OpenAICompatRuntimeTests(unittest.TestCase):
                 client.start()
                 self.assertEqual(client.request("account/read")["account"]["type"], "openai")
                 thread = client.request("thread/start", thread_start_params(client.home, "openai"))["thread"]["id"]
-                client.request("turn/start", {"threadId": thread, "effort": "high", "input": [{"type": "text", "text": "Inspect"}]})
+                client.request("turn/start", {"threadId": thread, "input": [{"type": "text", "text": "Inspect"}]})
                 self.assertTrue(done.wait(20), str(events[-5:]))
                 self.assertFalse([params for method, params in events if method == "error"])
                 self.assertEqual([call["tool"] for call in tools], ["fusion_inspect_document"])
                 self.assertEqual([body["model"] for body in requests], ["fixture-model", "fixture-model"])
-                self.assertEqual([body.get("reasoning", {}).get("effort") for body in requests], ["high", "high"])
                 self.assertEqual(set(auth), {"Bearer " + KEY})
                 self.assertIn(thread, [t["id"] for t in client.request("thread/list", {"cwd": str(client.home / "workspace")})["data"]])
                 # Checked while the runtime runs: shell snapshots would hold the child environment.

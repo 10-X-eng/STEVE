@@ -27,6 +27,7 @@ from .claude_transport import ClaudeTransport
 from .grok_auth import login_url_allowed
 from .openrouter_auth import KEYS_URL as OPENROUTER_KEYS_URL, login_url_allowed as openrouter_login_url_allowed
 from .openrouter_transport import OpenRouterTransport
+from .openai_compat_transport import OpenAICompatSettings, OpenAICompatTransport, normalize_base_url
 from .updates import UpdateChecker
 from .runtime_updates import RuntimeUpdater
 from .downloads import UpdateDownloader, downloads_folder
@@ -89,6 +90,8 @@ def thread_config(provider="chatgpt"):
         config[f"features.{feature}"] = False
     config["features.image_generation"] = provider == "chatgpt"
     config["features.goals"] = True
+    # Shell snapshots copy the environment to disk, including provider keys passed through env_key.
+    config["features.shell_snapshot"] = False
     config["features.code_mode"] = {
         "enabled": True,
         "direct_only_tool_namespaces": ["core", "conversation", "view"],
@@ -157,13 +160,14 @@ def python_activity(tool, arguments, identifier):
 
 
 class Controller:
-    def __init__(self, publish, transport_factory=Transport, open_browser=webbrowser.open, fusion_tools=None, debug_log=None, grok_factory=GrokTransport, ollama_factory=OllamaTransport, claude_factory=ClaudeTransport, openrouter_factory=OpenRouterTransport):
+    def __init__(self, publish, transport_factory=Transport, open_browser=webbrowser.open, fusion_tools=None, debug_log=None, grok_factory=GrokTransport, ollama_factory=OllamaTransport, claude_factory=ClaudeTransport, openrouter_factory=OpenRouterTransport, openai_factory=OpenAICompatTransport):
         self.publish = publish
         self.factory = transport_factory
         self.grok_factory = grok_factory
         self.ollama_factory = ollama_factory
         self.claude_factory = claude_factory
         self.openrouter_factory = openrouter_factory
+        self.openai_factory = openai_factory
         self.open_browser = open_browser
         self.fusion_tools = fusion_tools
         self.debug = debug_log or DebugLog(data_home())
@@ -203,6 +207,7 @@ class Controller:
         self._task_context = None
         self._job_contexts = {}
         self.ollama = OllamaSettings(self.debug.folder.parent)
+        self.openai_compat = OpenAICompatSettings(self.debug.folder.parent)
         self.state = {"connection": "starting", "provider": self.provider_choice.provider, "account": None, "models": [], "model": "",
                       "effort": "", "effortOptions": [], "defaultEffort": "", "preferenceNotice": "",
                       "taskDocument": None, "waitingForFusion": False, "waitingReason": "",
@@ -211,6 +216,7 @@ class Controller:
                       "accountChecked": False, "localStatus": "", "providerVersion": "", "error": "", "status": "Checking your account", "version": VERSION,
                       "ollamaHost": self.ollama.host, "ollamaPort": self.ollama.port, "ollamaAddress": self.ollama.label,
                       "ollamaUrl": self.ollama.url, "ollamaApiKeySet": self.ollama.api_key_set,
+                      **self.openai_compat.public_state(),
                       "releaseNotes": highlights(), "releaseNotesUnread": self.release_notes.unread(),
                       "updateInfo": None, "updateChecking": False, "updateStatus": "", "updateDownload": None,
                       "updateInstalling": False, "updateInstallReady": False, "autoInstallVersion": None,
@@ -402,6 +408,14 @@ class Controller:
                 normalize_url_extra(payload.get("url"))
                 if not payload.get("clearApiKey") and payload.get("apiKey"):
                     normalize_api_key(payload.get("apiKey"))
+            if action == "openaiServer":
+                if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self.state["loginPending"]
+                        or self.state["connection"] == "starting" or self.state["codexRestarting"]
+                        or (self.state.get("job") or {}).get("status") == "active"):
+                    raise ValueError("Finish or pause the current task before changing the server.")
+                normalize_base_url(payload.get("baseUrl"))
+                if not payload.get("clearApiKey") and payload.get("apiKey"):
+                    normalize_api_key(payload.get("apiKey"))
             if action == "job":
                 command = payload["command"]
                 if self.state["jobBusy"]:
@@ -547,7 +561,7 @@ class Controller:
                 self._handle(action, payload)
             except Exception as exc:
                 self.debug.record("controller.error", action=action,
-                                  error=type(exc).__name__ if action in ("login", "deviceLogin", "accountRefresh", "ollamaServer") else str(exc))
+                                  error=type(exc).__name__ if action in ("login", "deviceLogin", "accountRefresh", "ollamaServer", "openaiServer") else str(exc))
                 if isinstance(exc, TimeoutError) and self.client:
                     self.client.close()
                     with self._lock:
@@ -565,7 +579,7 @@ class Controller:
                     if action in ("login", "deviceLogin"):
                         self.state["loginPending"] = False
                         self.state["device"] = None
-                    if action == "connect" or action == "ollamaServer" and self.state["connection"] == "starting":
+                    if action == "connect" or action in ("ollamaServer", "openaiServer") and self.state["connection"] == "starting":
                         self.state["connection"] = "disconnected"
                         self.state["runtimeIssue"] = isinstance(exc, RuntimeUnavailable) or bool(getattr(self.client, "runtime_managed", False))
                         if self.state["runtimeIssue"]:
@@ -602,7 +616,16 @@ class Controller:
                 secret = None
             self._update_state({**self.ollama.public_state(), "error": ""})
             if self.state["provider"] == "ollama":
-                self._reconnect_ollama()
+                self._reconnect("Ollama")
+        elif action == "openaiServer":
+            secret = payload.pop("apiKey", None)
+            try:
+                self.openai_compat.save(payload.get("baseUrl"), secret, bool(payload.get("clearApiKey")))
+            finally:
+                secret = None
+            self._update_state({**self.openai_compat.public_state(), "error": ""})
+            if self.state["provider"] == "openai":
+                self._reconnect("OpenAI-compatible")
         elif action == 'restoreAfterUpdate':
             if (payload.get('threadId') and self.state['provider'] == payload.get('provider')
                     and self.state['account'] and self.state['account'] == payload.get('account')):
@@ -865,11 +888,13 @@ class Controller:
                               localStatus="", providerVersion="", status="Checking local Ollama" if self.state["provider"] == "ollama" else "Checking your account")
         self.emit()
         factory = {"grok": self.grok_factory, "ollama": self.ollama_factory, "claude": self.claude_factory,
-                   "openrouter": self.openrouter_factory}.get(self.state["provider"], self.factory)
+                   "openrouter": self.openrouter_factory, "openai": self.openai_factory}.get(self.state["provider"], self.factory)
         client = factory(lambda method, params: self._notification(method, params) if self.client is client else None)
         self.client = client
         if isinstance(client, OllamaTransport):
             client.use(self.ollama)
+        if isinstance(client, OpenAICompatTransport):
+            client.use(self.openai_compat)
         client.debug = self.debug
         client.on_request = lambda request_id, method, params: self._tool_request(client, request_id, method, params)
         try:
@@ -887,11 +912,11 @@ class Controller:
                 self.state.update(codexPendingVersion="", codexUpdateStatus=f"Codex {self.state['codexVersion']} is running")
         self._refresh_account(refresh_token=True)
 
-    def _reconnect_ollama(self):
-        """Restart the Ollama conversation engine so the saved server and API key take effect."""
+    def _reconnect(self, name):
+        """Restart the conversation engine so the saved server and API key take effect."""
         thread_id = self.thread_id if self.state["account"] else None
         account = copy.deepcopy(self.state["account"]) if thread_id else None
-        self._update_state({"status": "Connecting to Ollama", "error": ""})
+        self._update_state({"status": f"Connecting to {name}", "error": ""})
         self._connect()
         if not thread_id or not account or self.state["account"] != account:
             return
@@ -899,7 +924,7 @@ class Controller:
         try:
             self._open_history(thread_id)
         except Exception as exc:
-            raise RuntimeError("The Ollama server was saved, but this chat could not be reopened. Open it from chat history.") from exc
+            raise RuntimeError(f"The {name} server was saved, but this chat could not be reopened. Open it from chat history.") from exc
 
     def _interrupt_turn(self):
         if self.turn_id and self.state["busy"]:
@@ -1204,7 +1229,7 @@ class Controller:
                 self.state.update(loginPending=False, device=None, status="Sign in to begin")
                 raise RuntimeError("Browser sign-in finished, but no account was found. Try signing in again.")
             elif not self.state["loginPending"]:
-                self.state.update(models=[], model="", status="Start Ollama to begin" if local else "Sign in to begin")
+                self.state.update(models=[], model="", status="Start Ollama to begin" if local else "Set the server to begin" if self.state["provider"] == "openai" else "Sign in to begin")
         self.emit()
         if account and (changed or not self.state["models"] or refresh_models):
             models = []
@@ -1290,7 +1315,7 @@ class Controller:
         self.emit()
 
     def _login(self, device=False):
-        if self.state["provider"] in ("ollama", "claude"):
+        if self.state["provider"] in ("ollama", "claude", "openai"):
             self._refresh_account(refresh_models=True)
             return
         if self.state["loginPending"]:
@@ -1333,7 +1358,7 @@ class Controller:
         if len(text) > 32000:
             raise ValueError("Please keep your message under 32,000 characters.")
         if not self.state["account"]:
-            raise RuntimeError("Start Ollama and refresh models to begin." if self.state["provider"] == "ollama" else "Sign in with your selected provider to start a conversation.")
+            raise RuntimeError("Start Ollama and refresh models to begin." if self.state["provider"] == "ollama" else "Set the server under Server, then refresh models." if self.state["provider"] == "openai" else "Sign in with your selected provider to start a conversation.")
         if self.state["provider"] == "ollama" and not self.state["models"]:
             raise RuntimeError("Download a local model with tool support, then refresh models.")
         references = [self.images.remember(image) for image in images]

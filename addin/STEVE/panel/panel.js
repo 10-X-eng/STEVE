@@ -473,7 +473,8 @@ function renderControls() {
   const local=state.provider==="ollama";
   const claude=state.provider==="claude";
   const openrouter=state.provider==="openrouter";
-  const signed=!!state.account && (!(local || claude) || state.models.length>0);
+  const openai=state.provider==="openai";
+  const signed=!!state.account && (!(local || claude || openai) || state.models.length>0);
   const hasMessages=state.messages.length>0 && signed;
   $("app").classList.toggle("signed-out",!signed);
   $("welcome").hidden=hasMessages || !!state.runtimeIssue;
@@ -482,18 +483,23 @@ function renderControls() {
   $("sign-in-card").hidden=signed;
   $("login").disabled=!connected || !state.accountChecked || state.loginPending;
   const grok=state.provider==="grok";
-  const providerName=local?"Ollama":grok?"Grok / X":claude?"Claude":openrouter?"OpenRouter":"ChatGPT";
+  const providerName=local?"Ollama":grok?"Grok / X":claude?"Claude":openrouter?"OpenRouter":openai?"OpenAI-compatible":"ChatGPT";
   for(const id of ["provider","welcome-provider"]){$(id).value=state.provider||"chatgpt";$(id).disabled=!!state.busy || !!state.jobBusy || !!state.loginPending || state.connection==="starting";}
-  $("login").textContent=claude?(!state.accountChecked?"Checking Claude Code…":"Check connection"):local?(!state.accountChecked?"Checking Ollama…":"Refresh models"):state.loginPending?"Signing in…":!state.accountChecked?"Checking your account…":grok?"Sign in with X / Grok ↗":openrouter?"Sign in with OpenRouter ↗":"Sign in with ChatGPT ↗";
+  $("login").textContent=claude?(!state.accountChecked?"Checking Claude Code…":"Check connection"):local?(!state.accountChecked?"Checking Ollama…":"Refresh models"):openai?(!state.accountChecked?"Checking server…":"Refresh models"):state.loginPending?"Signing in…":!state.accountChecked?"Checking your account…":grok?"Sign in with X / Grok ↗":openrouter?"Sign in with OpenRouter ↗":"Sign in with ChatGPT ↗";
   $("sign-in-heading").textContent=local?"Your tools. Your local model.":"Your tools. Your AI.";
-  $("sign-in-description").textContent=claude?(state.localStatus||"Sign in to Claude Code outside Fusion, then check the connection here."):local?(state.localStatus||"Start Ollama and choose a downloaded model. No sign-in needed."):"Connect your account and bring your thinking partner into Fusion.";
-  $("sign-in-note").textContent=claude?"Experimental · Uses the account signed into Claude Code and its subscription limits. Web search is unavailable.":local?"Runs on this computer. Choose a model with tool support and at least 8K context. Web search is unavailable.":grok?"Uses your xAI account’s Grok access. Link your X account at grok.com if needed.":openrouter?"Experimental · Pay per use with your OpenRouter credits. Tool-calling quality varies by model. Web search is unavailable.":"Uses your subscription's Codex access";
+  $("sign-in-description").textContent=claude?(state.localStatus||"Sign in to Claude Code outside Fusion, then check the connection here."):local?(state.localStatus||"Start Ollama and choose a downloaded model. No sign-in needed."):openai?(state.localStatus||"Set the server’s base URL and optional API key under Server."):"Connect your account and bring your thinking partner into Fusion.";
+  $("sign-in-note").textContent=claude?"Experimental · Uses the account signed into Claude Code and its subscription limits. Web search is unavailable.":local?"Runs on this computer. Choose a model with tool support and at least 8K context. Web search is unavailable.":grok?"Uses your xAI account’s Grok access. Link your X account at grok.com if needed.":openrouter?"Experimental · Pay per use with your OpenRouter credits. Tool-calling quality varies by model. Web search is unavailable.":openai?"Experimental · Any server with the Responses API and tool calling. Tool-calling quality varies by model. Web search is unavailable.":"Uses your subscription's Codex access";
   $("claude-controls").hidden=!claude;
   $("claude-version").textContent=state.providerVersion?`Claude Code ${state.providerVersion}`:"Claude Code · Version unavailable";
   $("claude-links").hidden=!claude;
   $("openrouter-links").hidden=!openrouter;
   $("openrouter-controls").hidden=!openrouter || !signed;
   $("openrouter-refresh").disabled=state.busy || !!state.jobBusy || !connected;
+  $("openai-links").hidden=!openai;
+  $("openai-controls").hidden=!openai;
+  $("openai-status").textContent=state.localStatus||"Checking server…";
+  $("openai-refresh").disabled=state.busy || !!state.jobBusy || !connected;
+  syncOpenAIServer();
   $("claude-refresh").disabled=state.busy || !connected;
   $("local-controls").hidden=!local;
   $("local-links").hidden=!local;
@@ -502,7 +508,7 @@ function renderControls() {
   syncOllamaServer();
   $("login-wait").hidden=!state.loginPending;
   $("grok-login-note").hidden=!grok || signed || !state.loginPending || !!state.device;
-  $("device-login").hidden=local || claude || openrouter || state.loginPending;
+  $("device-login").hidden=local || claude || openrouter || openai || state.loginPending;
   $("device-login").disabled=!connected || !state.accountChecked;
   $("cancel-login").hidden=!state.loginPending;
   $("refresh-account").hidden=!state.loginPending;
@@ -517,7 +523,7 @@ function renderControls() {
   const jobCommand = /^\/jobs(?:\s|$)/.test($("message").value.trim());
   $("send").disabled=!signed || !connected || (!$("message").value.trim() && !draftImages.length) || draftImages.some(item=>!item.url) || !!clipboardRequest || submitting || (state.busy && !state.canSteer && !jobCommand) || !!state.jobBusy;
   const selectedModel=state.models.find(m=>m.id===state.model) || state.models.find(m=>m.isDefault);
-  $("attach-images").disabled=!signed || !connected || draftImages.length>=4 || ((local || openrouter) && selectedModel?.supportsImages===false);
+  $("attach-images").disabled=!signed || !connected || draftImages.length>=4 || ((local || openrouter || openai) && selectedModel?.supportsImages===false);
   if(restartingForUpdate){$("send").disabled=true;$("attach-images").disabled=true;}
   $("send").hidden=false;
   $("send").title=jobCommand?"Manage job":state.busy?"Steer current response":"Send message";
@@ -527,9 +533,9 @@ function renderControls() {
   $("new-chat").disabled=state.busy || !!state.jobBusy || !hasMessages;
   $("model").disabled=!signed || state.busy || !!state.jobBusy;
   $("effort").disabled=!signed || state.busy || !!state.jobBusy || !(state.effortOptions||[]).length;
-  $("logout").hidden=local || claude || !signed;
+  $("logout").hidden=local || claude || openai || !signed;
   $("logout").disabled=state.busy || !!state.jobBusy;
-  $("chatgpt-refresh").hidden=local || grok || claude || openrouter;
+  $("chatgpt-refresh").hidden=local || grok || claude || openrouter || openai;
   $("chatgpt-refresh").disabled=state.busy || !!state.jobBusy || !connected;
   $("codex-version").textContent=state.codexVersion?`Codex ${state.codexVersion}`:"Codex runtime";
   $("codex-update-status").textContent=state.codexPendingVersion?`Codex ${state.codexPendingVersion} is ready. Restart STEVE to use it and refresh models.`:state.codexUpdateStatus||"Checks OpenAI for updates automatically.";
@@ -594,7 +600,7 @@ function renderControls() {
   $("update-hint").textContent=downloadNote;
   $("account-email").textContent=local?"Local Ollama":state.account?.email || (signed?`${providerName} account`:"Not signed in");
   const ollamaAddress=state.ollamaAddress||"127.0.0.1:11434";
-  $("account-plan").textContent=local?`${ollamaAddress} · ${state.ollamaApiKeySet?"API key saved":"No sign-in needed"}`:signed?`${state.account.planType||providerName} · Connected`:`Use your ${providerName} account`;
+  $("account-plan").textContent=local?`${ollamaAddress} · ${state.ollamaApiKeySet?"API key saved":"No sign-in needed"}`:openai?`${state.openaiBaseUrl||"No server set"} · ${state.openaiApiKeySet?"API key saved":"No API key"}`:signed?`${state.account.planType||providerName} · Connected`:`Use your ${providerName} account`;
   // Settings rows summarize each page so the list doubles as a status check.
   $("row-account-value").textContent=local?`Ollama · ${ollamaAddress}`:`${providerName} · ${signed?(state.account?.email||"Connected"):"Not signed in"}`;
   const rmfgSummary={connected:"RMFG connected",authorizing:"RMFG connecting",reconnect:"RMFG needs reconnect"}[state.rmfgState]||"RMFG not connected";
@@ -769,6 +775,26 @@ function syncOllamaServer() {
   $("ollama-server").title=state.ollamaAddress?`Ollama server ${state.ollamaAddress}`:"Ollama host, port, and optional API key";
 }
 
+function syncOpenAIServer() {
+  const locked=!!state.busy || !!state.jobBusy || state.job?.status==="active" || state.connection==="starting" || !!state.codexRestarting;
+  $("openai-server").disabled=locked;
+  $("openai-server-welcome").disabled=locked;
+  $("openai-save").disabled=locked;
+  $("openai-clear-row").hidden=!state.openaiApiKeySet;
+  $("openai-key-note").textContent=state.openaiApiKeySet?"A key is saved on this computer. Leave the field blank to keep it, or remove it.":"Leave the key blank unless this server requires one.";
+}
+
+function openOpenAIServer() {
+  showSettings(false);
+  $("openai-url").value=state.openaiBaseUrl||"";
+  $("openai-key").value="";
+  $("openai-clear-key").checked=false;
+  syncOpenAIServer();
+  const dialog=$("openai-dialog");
+  if(!dialog.open && typeof dialog.showModal==="function") dialog.showModal();
+  if(typeof $("openai-url").focus==="function") $("openai-url").focus();
+}
+
 function readOllamaForm() {
   const host=String($("ollama-host").value||"").trim();
   const portText=String($("ollama-port").value??"").trim();
@@ -834,7 +860,7 @@ async function copyCode(button) {
   button.resetTimer = setTimeout(() => { button.textContent = "Copy"; delete button.dataset.copied; }, 1600);
 }
 
-$("login").onclick=()=>state.provider==="ollama"?act("accountRefresh",{refreshModels:true}):act("login");
+$("login").onclick=()=>state.provider==="ollama" || state.provider==="openai"?act("accountRefresh",{refreshModels:true}):act("login");
 $("dream").onclick=()=>{showPlusMenu(false);dreamDraft();};
 $("claude-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
 $("chatgpt-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
@@ -875,6 +901,23 @@ $("ollama-form").onsubmit=(event)=>{
     $("ollama-key").value="";
     $("ollama-clear-key").checked=false;
     const dialog=$("ollama-dialog");
+    if(typeof dialog.close==="function") dialog.close();
+  }).catch((error)=>{ state.error=error.message; dismissedError=""; render(); });
+};
+$("openai-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
+$("openai-server").onclick=$("openai-server-welcome").onclick=()=>openOpenAIServer();
+$("openai-close").onclick=()=>$("openai-dialog").close();
+$("openai-form").onsubmit=(event)=>{
+  event.preventDefault();
+  const baseUrl=String($("openai-url").value||"").trim();
+  if(!/^https?:\/\/[^\s@?#]+$/i.test(baseUrl)){ state.error="Enter the server's base URL, such as http://127.0.0.1:1234/v1."; dismissedError=""; render(); return; }
+  const payload={baseUrl, clearApiKey:!!$("openai-clear-key").checked};
+  const apiKey=$("openai-key").value;
+  if(!payload.clearApiKey && apiKey) payload.apiKey=apiKey;
+  return bridge("openaiServer", payload).then(()=>{
+    $("openai-key").value="";
+    $("openai-clear-key").checked=false;
+    const dialog=$("openai-dialog");
     if(typeof dialog.close==="function") dialog.close();
   }).catch((error)=>{ state.error=error.message; dismissedError=""; render(); });
 };

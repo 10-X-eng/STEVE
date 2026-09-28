@@ -11,7 +11,7 @@ Download the package for your computer from the [STEVE releases page](https://gi
 3. Open **Install STEVE.exe** and click **Install STEVE**. Installation is for your current Windows account and does not need administrator access. This preview's installer is unsigned.
 4. Open Fusion. Open **Scripts and Add-ins** (Design workspace: **Utilities > Add-ins**), select the **Add-ins** tab, select **STEVE**, and click **Run**. Enable **Run on Startup** if you want STEVE available every time you open Fusion.
 5. Click **STEVE** in the **Quick Access toolbar** at the top of Fusion. It is also available through command search.
-6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) or [local Ollama setup](#local-ollama). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
+6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
 
 To verify the download, run `Get-FileHash .\STEVE-0.8.1-windows-x64.zip -Algorithm SHA256` in PowerShell from the download folder and compare it with the accompanying `.zip.sha256` file.
 
@@ -23,7 +23,7 @@ To verify the download, run `Get-FileHash .\STEVE-0.8.1-windows-x64.zip -Algorit
    Double-clicking **Install STEVE.command** also works, but because this preview is not signed, macOS blocks it the first time. Open **System Settings > Privacy & Security**, choose **Open Anyway** next to the message about the installer, and confirm.
 4. Open Fusion. Open **Scripts and Add-ins** (Design workspace: **Utilities > Add-ins**), select the **Add-ins** tab, select **STEVE**, and click **Run**. Enable **Run on Startup** if you want STEVE available every time you open Fusion.
 5. Click **STEVE** in the **Quick Access toolbar** at the top of Fusion. It is also available through command search.
-6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) or [local Ollama setup](#local-ollama). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
+6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
 
 To verify the download, run `shasum -a 256 STEVE-0.8.1-macos-arm64.zip` in Terminal from the download folder and compare it with the accompanying `.zip.sha256` file. The bundled Codex binaries are signed and notarized by OpenAI.
 
@@ -67,6 +67,17 @@ Model quality varies widely. Fusion work depends on reliable tool calling and Py
 Text-only models cannot receive attachments or viewport images; STEVE explains this before sending. Web search is not connected for OpenRouter; installed Fusion API documentation remains available. Chats, history, and model choices are kept separately from the other providers under the `openrouter-runtime` and `openrouter` folders. OpenRouter forwards requests to the model's provider under your OpenRouter privacy settings; restrict providers there if needed.
 
 **Sign out** removes the key from this computer only. To revoke it, delete the **STEVE** key under [OpenRouter keys](https://openrouter.ai/settings/keys); **OpenRouter keys ↗** under **Settings → Provider & account** opens that page. If OpenRouter rejects the saved key, STEVE asks you to sign in again. Out-of-credit and rate-limit errors are shown in the chat; add credits or wait, then resend.
+
+## OpenAI-compatible server (experimental)
+
+Use any server that implements the OpenAI **Responses API** (`POST /responses`) with tool calling, such as LM Studio, vLLM, llama.cpp server, LiteLLM or OpenAI. Servers that only offer Chat Completions are not supported.
+
+1. Start the server and load a model with tool support.
+2. In STEVE, choose **OpenAI-compatible (experimental)**, then **Server**.
+3. Enter the base URL including the API path, for example `http://127.0.0.1:1234/v1`, and the API key if the server requires one.
+4. Choose **Refresh models** and pick a model.
+
+The API key is stored in macOS Keychain or protected with Windows DPAPI, never in STEVE's files. It is passed only to the conversation engine. Use `https` for servers on other computers. If the server does not report a model's context size, STEVE assumes 32K tokens; make sure the server loads the model with at least that much context.
 
 ## Local Ollama
 

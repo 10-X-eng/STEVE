@@ -125,7 +125,8 @@ def terminate_tree(process):
 
 def runtime_environment(home):
     env = dict(os.environ)
-    for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CHATGPT_API_KEY", "STEVE_OLLAMA_API_KEY"):
+    for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CHATGPT_API_KEY", "STEVE_OLLAMA_API_KEY",
+                 "STEVE_OPENAI_COMPAT_API_KEY"):
         env.pop(name, None)
     env["CODEX_HOME"] = str(home / "codex")
     env["RUST_LOG"] = "error"

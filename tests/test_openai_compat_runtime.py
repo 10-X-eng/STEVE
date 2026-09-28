@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,19 @@ except RuntimeUnavailable:
     HAS_RUNTIME = False
 
 KEY = "sk-fixture-openai-compat"
+
+
+def files_containing_key(folder, skip_locked=False):
+    found = []
+    for path in Path(folder).rglob("*"):
+        try:
+            if path.is_file() and KEY.encode() in path.read_bytes():
+                found.append(path)
+        except PermissionError:
+            # Windows locks files a running process holds open (Codex's databases).
+            if not skip_locked:
+                raise
+    return found
 
 
 @unittest.skipUnless(HAS_RUNTIME, "Fetch the bundled runtime first")
@@ -82,13 +96,18 @@ class OpenAICompatRuntimeTests(unittest.TestCase):
                 self.assertEqual([body["model"] for body in requests], ["fixture-model", "fixture-model"])
                 self.assertEqual(set(auth), {"Bearer " + KEY})
                 self.assertIn(thread, [t["id"] for t in client.request("thread/list", {"cwd": str(client.home / "workspace")})["data"]])
-                # Checked while the runtime runs: shell snapshots would hold the child environment.
-                leaked = [p for p in Path(folder).rglob("*") if p.is_file() and KEY.encode() in p.read_bytes()]
-                self.assertEqual(leaked, [])
+                # Checked while the runtime runs: Codex writes shell snapshots, which would hold the
+                # child environment, in the background about a second after a thread starts.
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    self.assertEqual(files_containing_key(folder, skip_locked=True), [])
+                    time.sleep(0.2)
             finally:
                 client.close()
                 server.shutdown()
                 server.server_close()
+            # After shutdown every file is readable, including ones Windows locked above.
+            self.assertEqual(files_containing_key(folder), [])
 
 
 if __name__ == "__main__":

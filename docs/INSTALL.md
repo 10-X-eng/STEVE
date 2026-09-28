@@ -77,7 +77,7 @@ Use any server that implements the OpenAI **Responses API** (`POST /responses`) 
 3. Enter the base URL including the API path, for example `http://127.0.0.1:1234/v1`, and the API key if the server requires one.
 4. Choose **Refresh models** and pick a model.
 
-The API key is stored in macOS Keychain or protected with Windows DPAPI, never in STEVE's files. It is passed only to the conversation engine. Use `https` for servers on other computers. If the server does not report a model's context size, STEVE assumes 32K tokens; make sure the server loads the model with at least that much context.
+The API key is stored in macOS Keychain or protected with Windows DPAPI, never in STEVE's files. It is passed only to the conversation engine. Use `https` for servers on other computers. If the server does not report a model's context size, STEVE assumes 32K tokens; make sure the server loads the model with at least that much context. The reasoning effort menu lists levels only when the server reports them or the model family is known to honor them (for example gpt-oss); other models show only Default.
 
 ## Local Ollama
 

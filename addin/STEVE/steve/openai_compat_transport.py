@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from .ollama_transport import normalize_api_key
+from .openrouter_auth import EFFORTS
 from .secure_store import SecureStore
 from .transport import Transport, data_home
 
@@ -17,6 +18,9 @@ API_KEY_ENV = "STEVE_OPENAI_COMPAT_API_KEY"
 MAX_METADATA = 4 * 1024 * 1024
 # Used when /models does not report a context window.
 FALLBACK_CONTEXT = 32768
+# /models has no standard effort field, and servers accept but ignore efforts a model's chat template lacks.
+# ponytail: families with documented levels only; add entries as models are verified.
+FAMILY_EFFORTS = (("gpt-oss", ("low", "medium", "high"), "medium"),)
 
 
 class OpenAICompatError(RuntimeError):
@@ -102,6 +106,19 @@ class OpenAICompatSettings:
         self.generation += 1
 
 
+def efforts(item):
+    """Advertised levels (OpenRouter-style reasoning metadata), else a known model family, else none."""
+    reasoning = item.get("reasoning") if isinstance(item.get("reasoning"), dict) else {}
+    advertised = reasoning.get("supported_efforts", item.get("supported_reasoning_efforts"))
+    if isinstance(advertised, list):
+        names = {entry.get("reasoningEffort") if isinstance(entry, dict) else entry for entry in advertised}
+        levels = [level for level in EFFORTS if level in names]
+        default = reasoning.get("default_effort", item.get("default_reasoning_effort"))
+        return levels, default if default in levels else ""
+    name = item["id"].lower()
+    return next(((list(levels), default) for family, levels, default in FAMILY_EFFORTS if family in name), ([], ""))
+
+
 def catalog(payload):
     models = []
     for item in payload.get("data", []) if isinstance(payload.get("data"), list) else []:
@@ -110,8 +127,10 @@ def catalog(payload):
             continue
         context = next((item[k] for k in ("context_length", "max_model_len", "context_window")
                         if isinstance(item.get(k), int) and not isinstance(item.get(k), bool) and item[k] > 0), 0)
+        levels, default = efforts(item)
         models.append({"id": name, "model": name, "displayName": name, "context": context or FALLBACK_CONTEXT,
-                       "defaultReasoningEffort": "", "supportedReasoningEfforts": []})
+                       "defaultReasoningEffort": default,
+                       "supportedReasoningEfforts": [{"reasoningEffort": level, "description": ""} for level in levels]})
     models.sort(key=lambda m: m["id"].lower())
     for index, model in enumerate(models):
         model["isDefault"] = index == 0
@@ -189,13 +208,13 @@ class OpenAICompatTransport(Transport):
         params = copy.deepcopy(params or {})
         if method == "account/read":
             try:
-                found = bool(self.models()["data"])
+                found = len(self.models()["data"])
             except OpenAICompatError as exc:
                 return {"account": None, "localStatus": str(exc)}
             base = self.settings.base_url
             return {"account": {"type": "openai", "id": hashlib.sha256(base.encode()).hexdigest()[:24],
                                 "email": urlsplit(base).netloc, "planType": "OpenAI-compatible"},
-                    "localStatus": f"Connected to {base}." if found else f"No models found at {base}."}
+                    "localStatus": f"Connected to {base} · {found} model{'s' * (found != 1)}." if found else f"No models found at {base}."}
         if method.startswith("account/"):
             raise OpenAICompatError("OpenAI-compatible servers need no sign-in. Set the base URL and API key under Server.")
         if method == "model/list":

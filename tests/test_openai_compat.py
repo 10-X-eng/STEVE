@@ -11,7 +11,8 @@ from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addin/STEVE"))
 from steve.openai_compat_transport import (API_KEY_ENV, FALLBACK_CONTEXT, PROVIDER, OpenAICompatError,
-                                           OpenAICompatSettings, OpenAICompatTransport, normalize_base_url)
+                                           OpenAICompatSettings, OpenAICompatTransport, catalog,
+                                           normalize_base_url)
 from steve.preferences import ProviderChoice
 from steve.transport import Transport
 
@@ -92,7 +93,9 @@ class OpenAICompatTests(unittest.TestCase):
             self.assertIsNone(account["account"])
             client.opener.open.side_effect = None
             client.opener.open.return_value = io.BytesIO(MODELS)
-            account = client.request("account/read")["account"]
+            result = client.request("account/read")
+            self.assertEqual(result["localStatus"], "Connected to http://127.0.0.1:1234/v1 · 2 models.")
+            account = result["account"]
             self.assertEqual((account["type"], account["email"]), ("openai", "127.0.0.1:1234"))
             with self.assertRaisesRegex(OpenAICompatError, "no sign-in"):
                 client.request("account/logout")
@@ -131,6 +134,20 @@ class OpenAICompatTests(unittest.TestCase):
             settings.save("http://10.0.0.5:8000/v1", clear_api_key=True)
             with patch.dict(os.environ, {API_KEY_ENV: "ambient"}):
                 self.assertNotIn(API_KEY_ENV, client.environment())
+
+    def test_efforts_come_from_metadata_then_known_families_and_never_guess(self):
+        models = {m["id"]: m for m in catalog({"data": [
+            {"id": "gateway/model", "reasoning": {"supported_efforts": ["high", "bogus", "low"], "default_effort": "low"}},
+            {"id": "flat", "supported_reasoning_efforts": [{"reasoningEffort": "medium"}], "default_reasoning_effort": "max"},
+            {"id": "gpt-oss-20b"}, {"id": "openai/GPT-OSS-120B"}, {"id": "gpt-oss-20b-meta", "reasoning": {"supported_efforts": []}},
+            {"id": "Qwen3.5-9B"}]})["data"]}
+        levels = lambda name: [e["reasoningEffort"] for e in models[name]["supportedReasoningEfforts"]]
+        self.assertEqual((levels("gateway/model"), models["gateway/model"]["defaultReasoningEffort"]), (["low", "high"], "low"))
+        self.assertEqual((levels("flat"), models["flat"]["defaultReasoningEffort"]), (["medium"], ""))
+        for name in ("gpt-oss-20b", "openai/GPT-OSS-120B"):
+            self.assertEqual((levels(name), models[name]["defaultReasoningEffort"]), (["low", "medium", "high"], "medium"))
+        self.assertEqual(levels("gpt-oss-20b-meta"), [])  # Server metadata wins over the family table.
+        self.assertEqual((levels("Qwen3.5-9B"), models["Qwen3.5-9B"]["defaultReasoningEffort"]), ([], ""))
 
     def test_provider_choice_remembers_openai(self):
         with tempfile.TemporaryDirectory() as folder:

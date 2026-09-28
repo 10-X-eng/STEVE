@@ -224,7 +224,8 @@ Fusion API quick reference:
   Negative distance cuts into the body; positive goes outward (use Join for a boss). "No target body found
   to cut" means the cut points away from the body. Through hole: input = extrudeFeatures.createInput(profile,
   CutFeatureOperation); input.setAllExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection).
-- Fillet: filletFeatures.createInput().edgeSetInputs.addConstantRadiusEdgeSet(edges, value, True). Chamfer:
+- Edge sets are adsk.core.ObjectCollection: edges = adsk.core.ObjectCollection.create(); edges.add(edge).
+  Fillet: filletFeatures.createInput().edgeSetInputs.addConstantRadiusEdgeSet(edges, value, True). Chamfer:
   chamferFeatures.createInput2().chamferEdgeSets.addEqualDistanceChamferEdgeSet(edges, value, True).
   Edges around a pocket or hole opening: the face's loops where not loop.isOuter; a loop's edges are loop.edges.
 - Measure after every change: body.volume (cm^3), face.area (cm^2), body.boundingBox. A 1 in pocket 1 in deep

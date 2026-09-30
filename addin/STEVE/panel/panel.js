@@ -748,11 +748,11 @@ function renderJob() {
   $("job-pause").hidden = !job || job.status !== "active";
   $("job-pause").disabled = unavailable;
   $("job-resume").hidden = !job || job.status === "active" || job.status === "complete";
-  $("job-resume").disabled = unavailable || !!state.busy;
-  $("job-resume").title = state.busy && job?.status !== "active" ? "The current response is finishing. Resume becomes available when it is idle." : "";
+  $("job-resume").disabled = unavailable || !!state.jobResumePending;
+  $("job-resume").title = state.busy ? "Continue this job after the current work finishes, without interrupting it." : "";
   $("job-wait-note").hidden = !job || job.status === "active" || job.status === "complete" || !state.busy;
-  $("job-wait-note").textContent = "The current response is finishing. Resume will be available when it is idle.";
-  $("job-resume").textContent = job?.status === "budgetLimited" ? "Resume with budget below" : "Resume";
+  $("job-wait-note").textContent = state.jobResumePending ? "Resume requested. The job will continue on its original document after the current work finishes." : "You can resume now. The current work will finish before the job continues.";
+  $("job-resume").textContent = state.jobResumePending ? "Resume requested" : job?.status === "budgetLimited" ? "Resume with budget below" : "Resume";
   $("job-clear").hidden = !job;
   $("job-clear").disabled = unavailable;
   $("job-save").disabled = unavailable || !!state.busy;

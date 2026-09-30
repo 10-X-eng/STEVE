@@ -20,7 +20,7 @@ in older chats. Everything is stored locally in STEVE's shared `images` folder.
 After updating, **New in STEVE** shows a short, dismissible summary. Reopen it anytime
 from **Settings → Updates → What’s new in this version**; it works offline.
 
-Choose **ChatGPT** for your subscription’s Codex access, **Grok / X** for your xAI account’s Grok access, **Claude (experimental)** through your Claude Code subscription login, **OpenRouter (experimental)** for pay-per-use models from many companies, or **Ollama (local)** for a downloaded model on your computer. The Windows and macOS packages include the conversation runtime, so you can get started without a separate Python, Node.js, or Codex installation. Claude additionally requires the official Claude Code client; OpenRouter requires an account with credits; Ollama requires its local app. You never copy an API key, and no separate STEVE account is required.
+Choose **ChatGPT** for your subscription’s Codex access, **Grok / X** for your xAI account’s Grok access, **Claude (experimental)** through your Claude Code subscription login, **OpenRouter (experimental)** for pay-per-use models from many companies, or **Custom server** for Ollama or an OpenAI-compatible Responses API server. The Windows and macOS packages include the conversation runtime, so you can get started without a separate Python, Node.js, or Codex installation. Claude additionally requires the official Claude Code client; OpenRouter requires an account with credits; Ollama requires its local app. Custom servers can use an optional API key stored in the system credential store. No separate STEVE account is required.
 
 For Claude, [install Claude Code](https://code.claude.com/docs/en/setup), run `claude auth login` in a terminal outside Fusion, then choose **Claude (experimental)** in STEVE and **Check connection**. Already signed in? STEVE checks automatically. Your account's models and effort choices appear in the composer. See [Claude setup and limitations](docs/INSTALL.md#claude-subscription-experimental).
 
@@ -97,9 +97,13 @@ The integration uses xAI OAuth and its public Grok CLI client; STEVE does not re
 
 Choose **OpenRouter (experimental)**, then **Sign in with OpenRouter**, and approve access in your browser. OpenRouter creates a key labeled STEVE in your account; STEVE stores it in the macOS Keychain or Windows' per-user encryption, and you never copy it. The model picker lists OpenRouter models with tool calling and at least 64K context, grouped by company, with each model's effort levels. Usage is billed to your OpenRouter credits. Tool-calling quality varies by model, and web search is unavailable. See [OpenRouter setup](docs/INSTALL.md#openrouter-experimental).
 
-### Local Ollama
+### Custom server
 
-Choose **Ollama (local)** to use a model running on your computer. The default server is `http://127.0.0.1:11434`, with no sign-in. Choose **Server** to use another host or port, and add an API key only if that server requires one. STEVE discovers downloaded models with tool support and keeps local chats and preferences separate. Models with vision support can inspect pictures; web search is unavailable with this provider. See [local setup](docs/INSTALL.md#local-ollama) for a small Gemma configuration and the required 8K context setting.
+Choose **Custom server**, open **Server**, and select **Ollama** or **OpenAI-compatible**. Both use the existing Codex runtime, one server dialog, and protected API-key storage. Enter an HTTP or HTTPS server URL and an optional key. Switching types preserves each type's settings, keys, preferences, and chat history.
+
+Ollama defaults to `http://127.0.0.1:11434` and supports path prefixes and gateway queries. STEVE discovers downloaded models with tool support, loads them with their saved context settings, and checks vision capability. Existing Ollama installations keep their settings and chats. See [local setup](docs/INSTALL.md#local-ollama) for the required 8K context setting.
+
+OpenAI-compatible servers must implement the Responses API and tool calling. Enter the API base URL, usually ending in `/v1`. STEVE discovers models through `/models`; see [server setup](docs/INSTALL.md#openai-compatible-server-experimental). Web search is unavailable with custom servers.
 
 ## Try asking
 
@@ -173,7 +177,7 @@ See the [execution bridge](docs/FUSION_EXECUTION.md) for tool contracts, Undo be
 
 ## Your account and data
 
-Conversation content, attached images, and requested Fusion tool results travel through the local Codex runtime to your selected provider: OpenAI for ChatGPT, xAI for Grok, Anthropic for Claude, OpenRouter and the model's provider for OpenRouter, or your own computer for Ollama. STEVE does not operate an AI proxy or manage separate AI billing. Codex manages authentication locally; STEVE does not copy credentials from another installation or inherit API keys from the environment.
+Conversation content, attached images, and requested Fusion tool results travel through the local Codex runtime to your selected provider: OpenAI for ChatGPT, xAI for Grok, Anthropic for Claude, OpenRouter and the model's provider for OpenRouter, or the configured custom server for Ollama and OpenAI-compatible models. STEVE does not operate an AI proxy or manage separate AI billing. Codex manages authentication locally; STEVE does not copy credentials from another installation or inherit API keys from the environment.
 
 History, preferences, image caches, and optional logs live under the current user's STEVE data folder: `%LOCALAPPDATA%\STEVE` on Windows and `~/Library/Application Support/STEVE` on macOS. History is local to STEVE and does not sync with the ChatGPT website. Signing out hides conversations without deleting local files. Debug logs may contain design details and are never automatically uploaded by STEVE.
 

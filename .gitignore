@@ -8,3 +8,10 @@ artifacts/
 addin/STEVE/runtime/
 addin/STEVE/.vscode/
 .pytest_cache/
+# Local secrets and machine-specific settings; never commit keys.
+.env
+.env.*
+*.pem
+*.key
+secrets/
+.claude/settings.local.json

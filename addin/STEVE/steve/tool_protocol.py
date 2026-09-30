@@ -200,6 +200,38 @@ If no assembly design is open, create one only as needed for the requested assem
 application mode, inspect the new document, then insert in a separate modeling operation.""",
 }
 
+# Appended for local and OpenAI-compatible models, which miss these points in the full prompt.
+# Each recipe was run in Fusion; keep it short and verified.
+FUSION_QUICK_REFERENCE = """
+Fusion API quick reference:
+- Start scripts with import adsk.core, adsk.fusion. Do not wrap run() in try/except or return errors as
+  results: let exceptions raise so STEVE reports them and rolls back the partial change.
+- API lengths are always centimeters, even when the document shows inches or mm. Feature
+  sizes: adsk.core.ValueInput.createByString('3 in'). Point3D and sketch coordinates: convert
+  (1 in = 2.54 cm) or use context['helpers'].evaluate('3 in', 'in'). Convert measurements
+  back before checking or reporting, and label verification units truthfully.
+- Box: sketch = root.sketches.add(root.xYConstructionPlane);
+  sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2);
+  root.features.extrudeFeatures.addSimple(sketch.profiles.item(0), value, FeatureOperations.NewBodyFeatureOperation).
+- Faces are adsk.fusion.BRepFace. Planar: face.geometry.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType.
+  Outward normal: ok, normal = face.evaluator.getNormalAtPoint(face.pointOnFace). Pick faces by normal and position.
+- Pocket on a face; copy this pattern (half = half the pocket width in cm):
+    sketch = root.sketches.addWithoutEdges(face)  # never sketches.add(face): its profiles.item(0) is the ring around your shape
+    c = sketch.modelToSketchSpace(model_point)    # face sketch axes differ from model axes
+    sketch.sketchCurves.sketchLines.addCenterPointRectangle(c, adsk.core.Point3D.create(c.x + half, c.y + half, c.z))
+    root.features.extrudeFeatures.addSimple(sketch.profiles.item(0), adsk.core.ValueInput.createByString('-1 in'),
+                                            adsk.fusion.FeatureOperations.CutFeatureOperation)
+  Negative distance cuts into the body; positive goes outward (use Join for a boss). "No target body found
+  to cut" means the cut points away from the body. Through hole: input = extrudeFeatures.createInput(profile,
+  CutFeatureOperation); input.setAllExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection).
+- Edge sets are adsk.core.ObjectCollection: edges = adsk.core.ObjectCollection.create(); edges.add(edge).
+  Fillet: filletFeatures.createInput().edgeSetInputs.addConstantRadiusEdgeSet(edges, value, True). Chamfer:
+  chamferFeatures.createInput2().chamferEdgeSets.addEqualDistanceChamferEdgeSet(edges, value, True).
+  Edges around a pocket or hole opening: the face's loops where not loop.isOuter; a loop's edges are loop.edges.
+- Measure after every change: body.volume (cm^3), face.area (cm^2), body.boundingBox. A 1 in pocket 1 in deep
+  removes 1 in^3 (16.387 cm^3); if the volume change differs, the feature is wrong: fix it before reporting.
+"""
+
 PYTHON_CONTEXT = (
     "Define def run(context); STEVE calls it once on Fusion's main thread with fresh globals. "
     "Context: app, data, ui, document, product, products (by productType), design, root, units, "

@@ -1,16 +1,13 @@
 """Local Ollama discovery and the bundled conversation runtime's Responses provider."""
-import copy
 import ipaddress
 import json
-import os
-from pathlib import Path
 import re
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.request import Request
 
-from .secure_store import SecureStore
-from .transport import Transport, data_home
+from .custom_server import (CustomServerTransport, ServerSettings, normalize_api_key, normalize_base_url,
+                            responses_config, server_opener)
 
 BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_HOST = "127.0.0.1"
@@ -133,22 +130,6 @@ def normalize_url_extra(value):
     return path, query, canonical
 
 
-def normalize_api_key(value):
-    """Blank means leave the saved key unchanged. Never accept header or control characters."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("Enter the API key as text, or leave it blank.")
-    if len(value) > 4096:
-        raise ValueError("That API key is too long.")
-    value = value.strip()
-    if not value:
-        return None
-    if any(ord(character) < 33 or ord(character) == 127 for character in value):
-        raise ValueError("The API key cannot include spaces or control characters.")
-    return value
-
-
 def active_origin(settings):
     """Saved servers use their own origin. The default still follows BASE_URL for tests."""
     if settings is not None and settings.explicit:
@@ -177,22 +158,18 @@ def connection_status(settings, models_found):
     return f"Connected to {label}. No sign-in needed."
 
 
-class OllamaSettings:
+class OllamaSettings(ServerSettings):
     """Host, port, and an optional API key. The key stays in the system credential store."""
 
     def __init__(self, home, store=None):
-        self.home = Path(home) / "ollama"
-        self.path = self.home / "endpoint.json"
+        super().__init__(home, "ollama", "ollama-key", store)
+        self.scheme = "http"
         self.host = DEFAULT_HOST
         self.port = DEFAULT_PORT
         self.prefix = ""
         self.query = {}
         self.url = ""
         self.explicit = False
-        self.api_key_set = False
-        self.generation = 0
-        self._secret = None
-        self._store = store
         self._load()
 
     def __repr__(self):
@@ -203,7 +180,7 @@ class OllamaSettings:
         return f"{format_host(self.host)}:{self.port}{self.url}"
 
     def origin(self):
-        return f"http://{format_host(self.host)}:{self.port}{self.prefix}"
+        return f"{self.scheme}://{format_host(self.host)}:{self.port}{self.prefix}"
 
     def request_url(self, suffix):
         url = self.origin() + suffix
@@ -213,23 +190,8 @@ class OllamaSettings:
 
     def public_state(self):
         return {"ollamaHost": self.host, "ollamaPort": self.port, "ollamaAddress": self.label,
-                "ollamaUrl": self.url, "ollamaApiKeySet": self.api_key_set}
-
-    @property
-    def store(self):
-        if self._store is None:
-            self._store = SecureStore(self.home, "ollama-key")
-        return self._store
-
-    @property
-    def api_key(self):
-        if not self.api_key_set:
-            return ""
-        if self._secret is None:
-            record = self.store.read() or {}
-            secret = record.get("apiKey", "")
-            self._secret = secret if isinstance(secret, str) else ""
-        return self._secret
+                "ollamaUrl": self.url, "ollamaApiKeySet": self.api_key_set,
+                "ollamaBaseUrl": self.origin() + ("?" + urlencode(self.query) if self.query else "")}
 
     def _load(self):
         try:
@@ -239,6 +201,11 @@ class OllamaSettings:
         if not isinstance(value, dict):
             return
         try:
+            if value.get("baseUrl"):
+                self.scheme, self.host, self.port, self.prefix, self.query, self.url = self.parse_url(value["baseUrl"])
+                self.api_key_set = value.get("apiKeySet") is True
+                self.explicit = True
+                return
             host, port = normalize_endpoint(value.get("host"), value.get("port"))
         except (TypeError, ValueError):
             return
@@ -250,45 +217,36 @@ class OllamaSettings:
         except ValueError:
             self.prefix, self.query, self.url = "", {}, ""
 
-    def _write(self, host, port, key_set, url):
-        self.home.mkdir(parents=True, exist_ok=True)
-        if os.name != "nt":
-            os.chmod(self.home, 0o700)
-        temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"host": host, "port": port, "apiKeySet": bool(key_set), "url": url}), encoding="utf-8")
-        if os.name != "nt":
-            os.chmod(temporary, 0o600)
-        temporary.replace(self.path)
+    @staticmethod
+    def parse_url(base_url):
+        if not isinstance(base_url, str):
+            raise ValueError("Enter the Ollama server URL.")
+        base, sep, query_text = base_url.strip().partition("?")
+        base = normalize_base_url(base)
+        parts = urlsplit(base)
+        host, port = normalize_endpoint(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+        prefix, query, extra = normalize_url_extra(parts.path + ("?" + query_text if sep else ""))
+        return parts.scheme, host, port, prefix, query, extra
+
+    def save_url(self, base_url, api_key=None, clear_api_key=False):
+        scheme, host, port, prefix, query, extra = self.parse_url(base_url)
+        canonical = f"{scheme}://{format_host(host)}:{port}{extra}"
+        self.save_endpoint({"baseUrl": canonical, "host": host, "port": port, "url": extra}, api_key, clear_api_key)
+        self.scheme, self.host, self.port = scheme, host, port
+        self.prefix, self.query, self.url = prefix, query, extra
+        self.explicit = True
 
     def save(self, host, port=None, api_key=None, clear_api_key=False, url=""):
+        # Compatibility for existing callers and endpoint.json records.
         host, port = normalize_endpoint(host, port)
-        prefix, query, canonical = normalize_url_extra(url)
-        if not clear_api_key and api_key is not None:
-            api_key = normalize_api_key(api_key)
-        stored_secret = None
-        key_set = self.api_key_set
-        if clear_api_key:
-            stored_secret = ""
-            key_set = False
-        elif api_key:
-            stored_secret = api_key
-            key_set = True
-        if stored_secret is not None and (stored_secret or self.api_key_set or self._store is not None):
-            self.store.write({"apiKey": stored_secret})
-        self._write(host, port, key_set, canonical)
-        self.host, self.port = host, port
-        self.prefix, self.query, self.url = prefix, query, canonical
-        self.explicit = True
-        self.api_key_set = key_set
-        self.generation += 1
-        if stored_secret is not None:
-            self._secret = stored_secret
+        _, _, extra = normalize_url_extra(url)
+        self.save_url(f"http://{format_host(host)}:{port}{extra}", api_key, clear_api_key)
 
 
 class OllamaAPI:
     def __init__(self, settings=None):
         # Reach the configured server directly. A system HTTP proxy must not see model metadata.
-        self.opener = build_opener(ProxyHandler({}))
+        self.opener = server_opener()
         self.settings = settings
 
     def _headers(self):
@@ -313,7 +271,11 @@ class OllamaAPI:
             return result
         except HTTPError as exc:
             exc.close()
-            raise OllamaError("Ollama could not load the requested model. Check that it is downloaded and fits in memory, then refresh models.") from exc
+            if exc.code in (401, 403):
+                raise OllamaError("The server rejected the API key. Check it under Server.") from None
+            if 300 <= exc.code < 400:
+                raise OllamaError("The server redirected to a different origin. Enter its direct URL under Server.") from None
+            raise OllamaError("Ollama could not load the requested model. Check that it is downloaded and fits in memory, then refresh models.") from None
         except TimeoutError as exc:
             raise OllamaError("Ollama took too long to respond. Check available memory or choose a smaller model, then retry.") from exc
         except (URLError, OSError) as exc:
@@ -371,57 +333,30 @@ class OllamaAPI:
         return {"model": model, "context": allocated, "vision": "vision" in info["capabilities"]}
 
 
-class OllamaTransport(Transport):
+class OllamaTransport(CustomServerTransport):
+    provider_id = "steve_ollama"
+    runtime_folder = "ollama-runtime"
+    api_key_env = API_KEY_ENV
+    error_type = OllamaError
+
     def __init__(self, on_event, home=None, command=None, api=None):
-        super().__init__(on_event, home=(home or data_home()) / "ollama-runtime", command=command)
+        super().__init__(on_event, home=home, command=command)
         self.api = api or OllamaAPI()
-        self.settings = None
-        self.default_model = None
-        self.threads = {}
 
     def use(self, settings):
-        self.settings = settings
+        super().use(settings)
         if isinstance(self.api, OllamaAPI):
             self.api.settings = settings
-
-    def _api_key(self):
-        settings = self.settings
-        if settings is None or not settings.api_key_set:
-            return ""
-        return settings.api_key or ""
 
     def _endpoint_signature(self):
         settings = self.settings
         query = tuple(sorted((settings.query or {}).items())) if settings is not None and settings.explicit else ()
         return (active_origin(settings), query, bool(self._api_key()), getattr(settings, "generation", 0))
 
-    def environment(self):
-        env = super().environment()
-        env.pop(API_KEY_ENV, None)
-        key = self._api_key()
-        if key:
-            env[API_KEY_ENV] = key
-        return env
-
     @staticmethod
     def config(prepared, origin=None, api_key_set=False, query=None):
-        context = prepared["context"]
-        # env_key names the child-process variable. Codex reads it per request, so the
-        # secret is not copied into thread config.
-        config = {"model_provider": "steve_ollama", "model_providers.steve_ollama.name": "Ollama (local)",
-                  "model_providers.steve_ollama.base_url": (BASE_URL if origin is None else origin) + "/v1",
-                  "model_providers.steve_ollama.requires_openai_auth": False,
-                  "model_providers.steve_ollama.wire_api": "responses",
-                  "model_providers.steve_ollama.supports_websockets": False,
-                  "model_context_window": context, "model_auto_compact_token_limit": context - max(2048, context // 4),
-                  "model_supports_reasoning_summaries": False, "web_search": "disabled",
-                  "features.code_mode": {"enabled": False, "direct_only_tool_namespaces": ["core", "conversation", "view"]}}
-        if api_key_set:
-            config["model_providers.steve_ollama.env_key"] = API_KEY_ENV
-        if query:
-            # Codex appends these to /v1/responses. They are not a JSON think switch.
-            config["model_providers.steve_ollama.query_params"] = dict(query)
-        return config
+        return responses_config("steve_ollama", "Ollama (local)", (BASE_URL if origin is None else origin) + "/v1",
+                                prepared["context"], env_key=API_KEY_ENV if api_key_set else None, query=query)
 
     def provider_config(self, prepared):
         settings = self.settings
@@ -429,60 +364,19 @@ class OllamaTransport(Transport):
         return self.config(prepared, origin=settings.origin() if explicit else None,
                            api_key_set=bool(self._api_key()), query=settings.query if explicit else None)
 
-    def _prepared(self, thread_id):
-        prepared = (self.threads.get(thread_id) or {}).get("prepared")
-        return prepared if isinstance(prepared, dict) else {}
+    def read_account(self):
+        try:
+            info = self.api.request("/api/version")
+            version = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(info.get("version", "")))
+            if not version or tuple(map(int, version.groups())) < (0, 13, 3):
+                raise OllamaError("Update Ollama to 0.13.3 or newer for Responses API support, then refresh models.")
+        except OllamaError as exc:
+            return {"account": None, "localStatus": str(exc)}
+        return {"account": {"type": "ollama", "id": "local-ollama", "email": "Local Ollama", "planType": "On this computer"},
+                "localStatus": connection_status(self.settings, True)}
 
-    def _remember(self, thread_id, prepared):
-        self.threads[thread_id] = {"prepared": prepared, "endpoint": self._endpoint_signature()}
+    def models(self):
+        return self.api.models()
 
-    def request(self, method, params=None, **kwargs):
-        params = copy.deepcopy(params or {})
-        if method == "account/read":
-            try:
-                info = self.api.request("/api/version")
-                version = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(info.get("version", "")))
-                if not version or tuple(map(int, version.groups())) < (0, 13, 3):
-                    raise OllamaError("Update Ollama to 0.13.3 or newer for Responses API support, then refresh models.")
-            except OllamaError as exc:
-                return {"account": None, "localStatus": str(exc)}
-            return {"account": {"type": "ollama", "id": "local-ollama", "email": "Local Ollama", "planType": "On this computer"},
-                    "localStatus": connection_status(self.settings, True)}
-        if method.startswith("account/"):
-            raise OllamaError("Ollama runs locally and needs no sign-in. Start Ollama and refresh models.")
-        if method == "model/list":
-            result = self.api.models()
-            self.default_model = next((m["id"] for m in result["data"] if m["isDefault"]), None)
-            return result
-        if method == "thread/list":
-            params["modelProviders"] = ["steve_ollama"]
-        if method in ("thread/start", "thread/resume"):
-            model = params.get("model")
-            if not model and method == "thread/resume":
-                saved = super().request("thread/read", {"threadId": params["threadId"], "includeTurns": False})
-                model = saved.get("thread", {}).get("model")
-            model = model or self.default_model
-            if not model:
-                raise OllamaError("Download a local model with tools support, then choose Refresh models.")
-            prepared = self.api.prepare(model)
-            params["model"] = model
-            params.setdefault("config", {}).update(self.provider_config(prepared))
-            params["baseInstructions"] = params.get("baseInstructions", "") + "\nThis is a local Ollama session. Web search is unavailable. Use fusion_api_help for installed Fusion API documentation. Keep tool results small."
-            result = super().request(method, params, **kwargs)
-            self._remember(result["thread"]["id"], prepared)
-            return result
-        if method == "turn/start":
-            record = self.threads.get(params["threadId"]) or {}
-            previous = record.get("prepared") if isinstance(record.get("prepared"), dict) else {}
-            model = params.get("model") or previous.get("model") or self.default_model
-            prepared = self.api.prepare(model)
-            if previous != prepared or record.get("endpoint") != self._endpoint_signature():
-                super().request("thread/resume", {"threadId": params["threadId"], "model": model,
-                                                "config": self.provider_config(prepared)})
-                self._remember(params["threadId"], prepared)
-            params["model"] = model
-        if method in ("turn/start", "turn/steer"):
-            prepared = self._prepared(params["threadId"])
-            if not prepared.get("vision") and any(item.get("type") in ("image", "localImage") for item in params.get("input", [])):
-                raise OllamaError("This model cannot read images. Select a local model with vision support, then resend the image.")
-        return super().request(method, params, **kwargs)
+    def prepare(self, model):
+        return self.api.prepare(model)

@@ -527,7 +527,7 @@ class ControllerTests(unittest.TestCase):
             self.controller.dispatch("ollamaServer", {"host": "http://10.0.0.8", "port": 80})
         self.controller.dispatch("send", {"text": "Inspect this document"})
         eventually(lambda: self.controller.turn_id is not None)
-        with self.assertRaisesRegex(ValueError, "Ollama server"):
+        with self.assertRaisesRegex(ValueError, "changing the server"):
             self.controller.dispatch("ollamaServer", {"host": "10.0.0.8", "port": 11435, "apiKey": "secret-token"})
         self.client.complete()
         eventually(lambda: not self.controller.state["busy"])
@@ -565,6 +565,35 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.snapshot()["ollamaAddress"], "10.4.5.6:11434?think=false")
         self.assertEqual(self.controller.snapshot()["ollamaUrl"], "?think=false")
         self.assertIn("Design a bracket", self.controller.snapshot()["messages"][0]["text"])
+
+    def test_openai_server_dialog_saves_url_and_key_without_publishing_the_secret(self):
+        class MemoryStore:
+            value = None
+            def read(self):
+                return None if self.value is None else dict(self.value)
+            def write(self, value):
+                self.value = dict(value)
+        store = MemoryStore()
+        self.controller.openai_compat._store = store
+        with self.assertRaisesRegex(ValueError, "http:// or https://"):
+            self.controller.dispatch("openaiServer", {"baseUrl": "ftp://host/v1"})
+
+        def factory(notify):
+            client = FakeClient(notify)
+            client.account = {"type": "openai", "id": "server", "email": "127.0.0.1:1234"}
+            return client
+        self.controller.openai_factory = factory
+        self.controller.dispatch("provider", {"provider": "openai"})
+        eventually(lambda: (self.controller.snapshot().get("account") or {}).get("id") == "server")
+        previous = self.controller.client
+        self.controller.dispatch("openaiServer", {"baseUrl": "http://127.0.0.1:1234/v1/", "apiKey": "sk-secret-token"})
+        eventually(lambda: self.controller.client is not previous and not self.controller.state["busy"])
+        self.assertTrue(previous.closed)
+        snapshot = self.controller.snapshot()
+        self.assertEqual((snapshot["openaiBaseUrl"], snapshot["openaiApiKeySet"]), ("http://127.0.0.1:1234/v1", True))
+        self.assertNotIn("sk-secret-token", json.dumps(snapshot))
+        self.assertNotIn("sk-secret-token", self.controller.openai_compat.path.read_text(encoding="utf-8"))
+        self.assertEqual(store.value, {"apiKey": "sk-secret-token"})
 
     def test_update_checks_and_download_do_not_interrupt_an_active_turn(self):
         release = {"version": "0.3.0", "downloadUrl": "https://github.com/10-X-eng/STEVE/releases/download/v0.3.0/STEVE-0.3.0-windows-x64.zip",

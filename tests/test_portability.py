@@ -8,11 +8,15 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from audit_portability import audit, inspect, unchanged_upstream_binary, verified_runtime_hashes
+from audit_portability import audit, inspect, source_files, unchanged_upstream_binary, verified_runtime_hashes
 from build_package import find_compiler
 
 
 class PortabilityTests(unittest.TestCase):
+    def test_worktree_metadata_is_excluded_like_git_directories(self):
+        with patch('audit_portability.os.walk', return_value=[(ROOT, [], ['.git', 'README.md'])]):
+            self.assertEqual(list(source_files()), [ROOT / 'README.md'])
+
     def test_distributable_source_has_no_machine_paths(self):
         self.assertGreater(audit(), 0)
 

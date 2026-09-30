@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
   <title>STEVE · Your engineering partner</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <link rel="stylesheet" href="fusion.css?v=21">
   <script src="markdown.js?v=1" defer></script>
   <script src="images.js?v=3" defer></script>
   <script src="gallery.js?v=1" defer></script>
-  <script src="panel.js?v=35" defer></script>
+  <script src="panel.js?v=37" defer></script>
 </head>
 <body>
   <div id="app" class="app signed-out">
@@ -41,11 +41,10 @@
         </nav>
         <div id="settings-account" class="settings-page" hidden>
           <div id="account-menu" aria-label="Provider and account">
-            <div class="field"><label for="provider">AI provider</label><select id="provider" class="provider-select"><option value="chatgpt">ChatGPT</option><option value="grok">Grok / X</option><option value="claude">Claude (experimental)</option><option value="openrouter">OpenRouter (experimental)</option><option value="openai">OpenAI-compatible (experimental)</option><option value="ollama">Ollama (local)</option></select></div>
+            <div class="field"><label for="provider">AI provider</label><select id="provider" class="provider-select"><option value="chatgpt">ChatGPT</option><option value="grok">Grok / X</option><option value="claude">Claude (experimental)</option><option value="openrouter">OpenRouter (experimental)</option><option value="custom">Custom server</option></select></div>
             <div class="connection"><strong id="account-email">Not signed in</strong><span id="account-plan">Use your ChatGPT account</span></div>
-            <div id="local-controls" hidden><p id="local-status" class="note"></p><div class="button-row"><button id="ollama-server" class="secondary-button" type="button">Server</button><button id="local-refresh" class="secondary-button" type="button">Refresh models</button><button id="local-help" class="secondary-button" type="button">Local setup</button></div></div>
+            <div id="custom-controls" hidden><p id="custom-status" class="note"></p><div class="button-row"><button id="custom-server" class="secondary-button" type="button">Server</button><button id="custom-refresh" class="secondary-button" type="button">Refresh models</button><button id="custom-help" class="secondary-button" type="button">Server setup</button></div></div>
             <div id="claude-controls" hidden><p id="claude-version" class="note"></p><p class="note">Claude Code manages your account. Use <code>claude auth login</code> or <code>claude auth logout</code> in a terminal outside Fusion.</p><div class="button-row"><button id="claude-refresh" class="secondary-button">Check connection</button></div></div>
-            <div id="openai-controls" hidden><p id="openai-status" class="note"></p><div class="button-row"><button id="openai-server" class="secondary-button" type="button">Server</button><button id="openai-refresh" class="secondary-button" type="button">Refresh models</button></div></div>
             <div id="openrouter-controls" hidden><p class="note">Sign out removes the key from this computer. To revoke it, delete the STEVE key in OpenRouter.</p><div class="button-row"><button id="openrouter-keys" class="secondary-button">OpenRouter keys ↗</button><button id="openrouter-refresh" class="secondary-button">Refresh models</button></div></div>
             <div class="button-row"><button id="chatgpt-refresh" class="secondary-button" hidden>Refresh models</button><button id="logout" class="secondary-button" hidden>Sign out</button></div>
           </div>
@@ -136,7 +135,7 @@
         <section id="sign-in-card" class="sign-in-card">
           <div class="card-heading"><span class="connection-dot"></span><span id="sign-in-heading">Your tools. Your AI.</span></div>
           <p id="sign-in-description">Connect your account and bring your thinking partner into Fusion.</p>
-          <label class="sr-only" for="welcome-provider">AI provider</label><select id="welcome-provider" class="provider-select"><option value="chatgpt">ChatGPT</option><option value="grok">Grok / X</option><option value="claude">Claude (experimental)</option><option value="openrouter">OpenRouter (experimental)</option><option value="openai">OpenAI-compatible (experimental)</option><option value="ollama">Ollama (local)</option></select>
+          <label class="sr-only" for="welcome-provider">AI provider</label><select id="welcome-provider" class="provider-select"><option value="chatgpt">ChatGPT</option><option value="grok">Grok / X</option><option value="claude">Claude (experimental)</option><option value="openrouter">OpenRouter (experimental)</option><option value="custom">Custom server</option></select>
           <button id="login" class="primary-button">Sign in with ChatGPT <span aria-hidden="true">↗</span></button>
           <div id="login-wait" hidden><span class="small-spinner"></span><span>Finish signing in in your browser</span></div>
           <span id="grok-login-note" class="sign-in-note" hidden>If the browser shows a code for Grok Build, you don't need to copy it. STEVE completes sign-in automatically. Return to Fusion after approving access.</span>
@@ -144,8 +143,7 @@
           <button id="device-login" class="text-button">Use a device code instead</button>
           <button id="cancel-login" class="text-button" hidden>Cancel sign-in</button>
           <button id="refresh-account" class="text-button" hidden>I've signed in — check again</button>
-          <div id="local-links" hidden><button id="install-ollama" class="text-button" type="button">Install Ollama ↗</button><button id="local-setup" class="text-button" type="button">Local setup ↗</button><button id="ollama-server-welcome" class="text-button" type="button">Server</button></div>
-          <div id="openai-links" hidden><button id="openai-server-welcome" class="text-button" type="button">Server</button></div>
+          <div id="custom-links" hidden><button id="install-ollama" class="text-button" type="button">Install Ollama &#8599;</button><button id="custom-setup" class="text-button" type="button">Server setup &#8599;</button><button id="custom-server-welcome" class="text-button" type="button">Server</button></div>
           <div id="openrouter-links" hidden><button id="openrouter-credits" class="text-button">OpenRouter keys and credits ↗</button></div>
           <div id="claude-links" hidden><button id="install-claude" class="text-button">Install Claude Code ↗</button></div>
           <span id="sign-in-note" class="sign-in-note">Uses your subscription's Codex access</span>
@@ -226,36 +224,21 @@
     </form>
     <details class="job-help"><summary>Slash commands</summary><p><code>/jobs &lt;objective&gt;</code> — create or replace<br><code>/jobs</code> — status and controls<br><code>/jobs edit</code> — edit objective and budget<br><code>/jobs pause</code> — pause work<br><code>/jobs resume</code> — continue<br><code>/jobs clear</code> — remove job, keep chat</p></details>
   </dialog>
-  <dialog id="ollama-dialog" class="job-dialog" aria-labelledby="ollama-heading">
-    <div class="job-heading"><div><span class="eyebrow">Ollama server</span><h2 id="ollama-heading">Ollama server</h2></div><button id="ollama-close" type="button" class="icon-button" aria-label="Close Ollama server settings">×</button></div>
-    <p class="job-note">STEVE uses http. The port defaults to 11434. Add an API key only if that server requires one. Saving reconnects Ollama and reopens the current chat when the server answers.</p>
-    <form id="ollama-form" autocomplete="off">
-      <label for="ollama-host">Host</label>
-      <input id="ollama-host" type="text" required maxlength="253" autocomplete="off" spellcheck="false" placeholder="127.0.0.1">
-      <label for="ollama-port">Port <span class="job-note">(optional)</span></label>
-      <input id="ollama-port" type="text" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="11434">
-      <label for="ollama-url">URL path <span class="job-note">(optional)</span></label>
-      <input id="ollama-url" type="text" maxlength="512" autocomplete="off" spellcheck="false" placeholder="/prefix or ?think=false">
-      <p class="job-note">Added after the host and port. STEVE still calls /api and /v1 under a prefix. A query such as ?think=false is for a gateway that turns reasoning off on the URL. Put secrets in the API key field.</p>
-      <label for="ollama-key">API key <span class="job-note">(optional)</span></label>
-      <input id="ollama-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Leave blank unless the server requires one">
-      <p id="ollama-key-note" class="job-note"></p>
-      <label class="ollama-clear" id="ollama-clear-row" for="ollama-clear-key" hidden><input id="ollama-clear-key" type="checkbox"> Remove saved API key</label>
-      <button id="ollama-save" type="submit" class="primary-button">Save server</button>
-    </form>
-  </dialog>
-  <dialog id="openai-dialog" class="job-dialog" aria-labelledby="openai-heading">
-    <div class="job-heading"><div><span class="eyebrow">OpenAI-compatible server</span><h2 id="openai-heading">OpenAI-compatible server</h2></div><button id="openai-close" type="button" class="icon-button" aria-label="Close OpenAI-compatible server settings">×</button></div>
-    <p class="job-note">The server must support the Responses API (/responses) and tool calling, such as LM Studio, vLLM, llama.cpp server, LiteLLM or OpenAI. Saving reconnects and reopens the current chat when the server answers.</p>
-    <form id="openai-form" autocomplete="off">
-      <label for="openai-url">Base URL</label>
-      <input id="openai-url" type="url" required maxlength="512" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:1234/v1">
-      <p class="job-note">Include the API path, usually /v1. Use https for servers on other computers so the key is not sent in plain text.</p>
-      <label for="openai-key">API key <span class="job-note">(optional)</span></label>
-      <input id="openai-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Leave blank unless the server requires one">
-      <p id="openai-key-note" class="job-note"></p>
-      <label class="ollama-clear" id="openai-clear-row" for="openai-clear-key" hidden><input id="openai-clear-key" type="checkbox"> Remove saved API key</label>
-      <button id="openai-save" type="submit" class="primary-button">Save server</button>
+  <dialog id="server-dialog" class="job-dialog" aria-labelledby="server-heading">
+    <div class="job-heading"><div><span class="eyebrow">Custom server</span><h2 id="server-heading">Connect your model</h2></div><button id="server-close" type="button" class="icon-button" aria-label="Close server settings">&#215;</button></div>
+    <p class="job-note">Choose the server type and address. Changing types keeps each server's saved settings and chat history.</p>
+    <form id="server-form" autocomplete="off">
+      <label for="server-type">Server type</label>
+      <select id="server-type"><option value="ollama">Ollama</option><option value="openai">OpenAI-compatible</option></select>
+      <label for="server-url">Server URL</label>
+      <input id="server-url" type="url" required maxlength="512" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434">
+      <p id="server-url-note" class="job-note"></p>
+      <label for="server-key">API key <span class="job-note">(optional)</span></label>
+      <input id="server-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" placeholder="Leave blank unless the server requires one">
+      <p id="server-key-note" class="job-note"></p>
+      <label class="server-clear" id="server-clear-row" for="server-clear-key" hidden><input id="server-clear-key" type="checkbox"> Remove saved API key</label>
+      <p id="server-error" class="job-note" role="alert" hidden></p>
+      <button id="server-save" type="submit" class="primary-button">Save server</button>
     </form>
   </dialog>
 </body>

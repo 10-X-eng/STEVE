@@ -357,13 +357,13 @@ button.chip:hover:not(:disabled) { border-color: var(--accent); }
 #job-summary { font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; max-height: 110px; overflow: auto; }
 .job-note { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
 .job-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-#job-form, #ollama-form, #openai-form { display: flex; flex-direction: column; gap: 8px; }
-#job-form label, #ollama-form label, #openai-form label { font-size: 12px; color: var(--text); }
-#job-objective, #job-budget, #ollama-host, #ollama-port, #ollama-url, #ollama-key, #openai-url, #openai-key { box-sizing: border-box; width: 100%; background: var(--code-bg); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text); font: 12.5px/1.5 var(--sans); }
+#job-form, #server-form { display: flex; flex-direction: column; gap: 8px; }
+#job-form label, #server-form label { font-size: 12px; color: var(--text); }
+#job-objective, #job-budget, #server-type, #server-url, #server-key { box-sizing: border-box; width: 100%; background: var(--code-bg); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 9px 10px; color: var(--text); font: 12.5px/1.5 var(--sans); }
 #job-objective { resize: vertical; min-height: 86px; max-height: 180px; }
-#job-form .primary-button, #ollama-form .primary-button, #openai-form .primary-button { width: 100%; margin-top: 4px; }
-.ollama-clear { display: flex; align-items: center; gap: 8px; }
-.ollama-clear input { margin: 0; }
+#job-form .primary-button, #server-form .primary-button { width: 100%; margin-top: 4px; }
+.server-clear { display: flex; align-items: center; gap: 8px; }
+.server-clear input { margin: 0; }
 .job-help { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 10px; font-size: 11.5px; line-height: 1.9; color: var(--muted); }
 .job-help summary { cursor: pointer; }
 .job-help code { font-family: var(--mono); color: var(--accent); }

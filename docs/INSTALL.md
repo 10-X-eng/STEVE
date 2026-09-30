@@ -11,7 +11,7 @@ Download the package for your computer from the [STEVE releases page](https://gi
 3. Open **Install STEVE.exe** and click **Install STEVE**. Installation is for your current Windows account and does not need administrator access. This preview's installer is unsigned.
 4. Open Fusion. Open **Scripts and Add-ins** (Design workspace: **Utilities > Add-ins**), select the **Add-ins** tab, select **STEVE**, and click **Run**. Enable **Run on Startup** if you want STEVE available every time you open Fusion.
 5. Click **STEVE** in the **Quick Access toolbar** at the top of Fusion. It is also available through command search.
-6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
+6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental), [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
 
 To verify the download, run `Get-FileHash .\STEVE-0.8.1-windows-x64.zip -Algorithm SHA256` in PowerShell from the download folder and compare it with the accompanying `.zip.sha256` file.
 
@@ -23,7 +23,7 @@ To verify the download, run `Get-FileHash .\STEVE-0.8.1-windows-x64.zip -Algorit
    Double-clicking **Install STEVE.command** also works, but because this preview is not signed, macOS blocks it the first time. Open **System Settings > Privacy & Security**, choose **Open Anyway** next to the message about the installer, and confirm.
 4. Open Fusion. Open **Scripts and Add-ins** (Design workspace: **Utilities > Add-ins**), select the **Add-ins** tab, select **STEVE**, and click **Run**. Enable **Run on Startup** if you want STEVE available every time you open Fusion.
 5. Click **STEVE** in the **Quick Access toolbar** at the top of Fusion. It is also available through command search.
-6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental) [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
+6. Choose **ChatGPT**, **Grok / X**, or **OpenRouter (experimental)** and sign in, or follow [Claude subscription setup](#claude-subscription-experimental), [local Ollama setup](#local-ollama), or [an OpenAI-compatible server](#openai-compatible-server-experimental). See [OpenRouter setup](#openrouter-experimental) for its credits and model choice. Existing STEVE sign-in is checked automatically.
 
 To verify the download, run `shasum -a 256 STEVE-0.8.1-macos-arm64.zip` in Terminal from the download folder and compare it with the accompanying `.zip.sha256` file. The bundled Codex binaries are signed and notarized by OpenAI.
 
@@ -73,17 +73,17 @@ Text-only models cannot receive attachments or viewport images; STEVE explains t
 Use any server that implements the OpenAI **Responses API** (`POST /responses`) with tool calling, such as LM Studio, vLLM, llama.cpp server, LiteLLM or OpenAI. Servers that only offer Chat Completions are not supported.
 
 1. Start the server and load a model with tool support.
-2. In STEVE, choose **OpenAI-compatible (experimental)**, then **Server**.
+2. In STEVE, choose **Custom server**, then **Server**, and set **Server type** to **OpenAI-compatible**.
 3. Enter the base URL including the API path, for example `http://127.0.0.1:1234/v1`, and the API key if the server requires one.
 4. Choose **Refresh models** and pick a model.
 
-The API key is stored in macOS Keychain or protected with Windows DPAPI, never in STEVE's files. It is passed only to the conversation engine. Use `https` for servers on other computers. If the server does not report a model's context size, STEVE assumes 32K tokens; make sure the server loads the model with at least that much context.
+The API key is stored in macOS Keychain or encrypted with Windows DPAPI, never as plaintext in STEVE's settings. It is passed only to the conversation engine. Use `https` for servers on other computers. If the server does not report a model's context size, STEVE assumes 32K tokens; make sure the server loads the model with at least that much context. Switching server types retains their separate settings and chat histories.
 
 **Choosing a model.** Fusion modeling needs reliable tool calling and spatial reasoning, and small models often build the wrong geometry while reporting success. Use a recent model with strong agentic coding and tool use, roughly a current-generation 27B dense model or a larger recent mixture-of-experts model, and check dimensions yourself until you trust it. In testing with oMLX on a simple cube-and-pocket part and a five-feature plate (holes, fillets, a side-face boss, chamfers), Qwen3.8 Flash Next built every feature correctly; Qwen3.8 27B completed both parts but misplaced the plate's holes once; gpt-oss-20b, Gemma 4 26B and Nemotron 3.5 Lightning produced incorrect geometry. This is guidance, not a supported-model list.
 
 ## Local Ollama
 
-1. Install [Ollama](https://ollama.com/download) and start its app. STEVE connects to `http://127.0.0.1:11434` on your computer by default; no account or API key is needed. Choose **Server** on the Ollama card, or in **Accounts & providers**, to use another host, an optional port, an optional path or query, or an optional API key for a server on your network. STEVE uses http, and it sends the key only when you save one. A path is a prefix before `/api` and `/v1`. A query such as `?think=false` is appended for a gateway that uses the URL to turn reasoning off.
+1. Install [Ollama](https://ollama.com/download) and start its app. In STEVE, choose **Custom server**, then **Server**, and select **Ollama**. The default URL is `http://127.0.0.1:11434`. Enter a different HTTP or HTTPS URL to use another server, with an optional path prefix or gateway query such as `/ollama?think=false`. Add an API key only if the server requires one. Existing Ollama settings, protected keys, model preferences, and chats are retained.
 2. Download a model with tool support. For a modest GPU, a starting point is `ollama pull gemma4:e2b-it-qat`. Model quality and speed depend on the model and your hardware.
 3. Give the model at least 8K context. To keep the original model unchanged, save a plain-text file named `Modelfile` containing:
 
@@ -93,7 +93,7 @@ The API key is stored in macOS Keychain or protected with Windows DPAPI, never i
    ```
 
    In the folder containing that file, run `ollama create steve-gemma4:8k -f Modelfile`. This reuses the downloaded weights. The saved setting matters: a temporary context override during model preload does not carry over to Ollama's Responses API.
-4. In STEVE, choose **Ollama (local)** under **AI provider**, then select your configured model. Use **Refresh models** under **Settings → Provider & account** after downloading or configuring models. **Local setup** opens these instructions.
+4. In STEVE, choose **Custom server** with the **Ollama** server type under **AI provider**, then select your configured model. Use **Refresh models** under **Settings → Provider & account** after downloading or configuring models. **Local setup** opens these instructions.
 
 Only downloaded models that advertise tool calling appear. Models with vision support can receive attachments and viewport images; text-only models cannot. The Ollama provider excludes cloud models and has no web search; STEVE can still query documentation from Fusion's installed API. Fusion's own cloud/data operations and STEVE's update checks can still use the internet.
 

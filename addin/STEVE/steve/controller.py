@@ -28,6 +28,7 @@ from .grok_auth import login_url_allowed
 from .openrouter_auth import KEYS_URL as OPENROUTER_KEYS_URL, login_url_allowed as openrouter_login_url_allowed
 from .openrouter_transport import OpenRouterTransport
 from .openai_compat_transport import OpenAICompatSettings, OpenAICompatTransport, normalize_base_url
+from .custom_server import CustomServerTransport
 from .updates import UpdateChecker
 from .runtime_updates import RuntimeUpdater
 from .downloads import UpdateDownloader, downloads_folder
@@ -214,9 +215,8 @@ class Controller:
                       "job": None, "jobBusy": False, "jobNotice": "", "jobHasTarget": False,
                       "messages": [], "busy": False, "loginPending": False, "device": None,
                       "accountChecked": False, "localStatus": "", "providerVersion": "", "error": "", "status": "Checking your account", "version": VERSION,
-                      "ollamaHost": self.ollama.host, "ollamaPort": self.ollama.port, "ollamaAddress": self.ollama.label,
-                      "ollamaUrl": self.ollama.url, "ollamaApiKeySet": self.ollama.api_key_set,
-                      **self.openai_compat.public_state(),
+                      **self.openai_compat.public_state(), **self.ollama.public_state(),
+                      "customServerType": self.provider_choice.custom_provider, "serverSaving": False,
                       "releaseNotes": highlights(), "releaseNotesUnread": self.release_notes.unread(),
                       "updateInfo": None, "updateChecking": False, "updateStatus": "", "updateDownload": None,
                       "updateInstalling": False, "updateInstallReady": False, "autoInstallVersion": None,
@@ -389,6 +389,9 @@ class Controller:
                 return False
             if self.state["codexRestarting"] and action not in ("sync", "debugLogging", "openLogs", "setupHelp"):
                 return False
+            if self.state["serverSaving"] and action in ("send", "steer", "job", "provider", "customServer", "ollamaServer",
+                    "openaiServer", "restartRuntime", "openHistory", "connect", "logout", "login", "deviceLogin"):
+                return False
             if action == "restartRuntime":
                 if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self.state["loginPending"]
                         or self.state["codexUpdating"] or self.state["connection"] == "starting"):
@@ -399,23 +402,33 @@ class Controller:
             if action == 'dfm' and (self.state['busy'] or self._send_queued or self.state['jobBusy']
                                     or (self.state['job'] or {}).get('status') == 'active'):
                 raise ValueError('Finish or pause the current task before changing DFM.')
-            if action == "ollamaServer":
-                if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self.state["loginPending"]
-                        or self.state["connection"] == "starting" or self.state["codexRestarting"]
-                        or (self.state.get("job") or {}).get("status") == "active"):
-                    raise ValueError("Finish or pause the current task before changing the Ollama server.")
-                normalize_endpoint(payload.get("host"), payload.get("port"))
-                normalize_url_extra(payload.get("url"))
-                if not payload.get("clearApiKey") and payload.get("apiKey"):
-                    normalize_api_key(payload.get("apiKey"))
-            if action == "openaiServer":
+            if action in ("customServer", "ollamaServer", "openaiServer"):
                 if (self.state["busy"] or self._send_queued or self.state["jobBusy"] or self.state["loginPending"]
                         or self.state["connection"] == "starting" or self.state["codexRestarting"]
                         or (self.state.get("job") or {}).get("status") == "active"):
                     raise ValueError("Finish or pause the current task before changing the server.")
-                normalize_base_url(payload.get("baseUrl"))
-                if not payload.get("clearApiKey") and payload.get("apiKey"):
+                payload = dict(payload)
+                payload["selectServer"] = action == "customServer"
+                if action == "ollamaServer":
+                    # Older panel clients can still submit the host/port form.
+                    from .ollama_transport import format_host
+                    host, port = normalize_endpoint(payload.get("host"), payload.get("port"))
+                    _, _, extra = normalize_url_extra(payload.get("url"))
+                    payload.update(serverType="ollama", baseUrl=f"http://{format_host(host)}:{port}{extra}")
+                elif action == "openaiServer":
+                    payload["serverType"] = "openai"
+                kind = payload.get("serverType")
+                if kind == "ollama":
+                    OllamaSettings.parse_url(payload.get("baseUrl"))
+                elif kind == "openai":
+                    normalize_base_url(payload.get("baseUrl"))
+                else:
+                    raise ValueError("Choose Ollama or OpenAI-compatible as the server type.")
+                if not payload.get("clearApiKey"):
                     normalize_api_key(payload.get("apiKey"))
+                action = "customServer"
+                self.state["serverSaving"] = True
+                self.emit()
             if action == "job":
                 command = payload["command"]
                 if self.state["jobBusy"]:
@@ -561,7 +574,7 @@ class Controller:
                 self._handle(action, payload)
             except Exception as exc:
                 self.debug.record("controller.error", action=action,
-                                  error=type(exc).__name__ if action in ("login", "deviceLogin", "accountRefresh", "ollamaServer", "openaiServer") else str(exc))
+                                  error=type(exc).__name__ if action in ("login", "deviceLogin", "accountRefresh", "customServer") else str(exc))
                 if isinstance(exc, TimeoutError) and self.client:
                     self.client.close()
                     with self._lock:
@@ -579,13 +592,17 @@ class Controller:
                     if action in ("login", "deviceLogin"):
                         self.state["loginPending"] = False
                         self.state["device"] = None
-                    if action == "connect" or action in ("ollamaServer", "openaiServer") and self.state["connection"] == "starting":
+                    if action == "connect" or action == "customServer" and self.state["connection"] == "starting":
                         self.state["connection"] = "disconnected"
                         self.state["runtimeIssue"] = isinstance(exc, RuntimeUnavailable) or bool(getattr(self.client, "runtime_managed", False))
                         if self.state["runtimeIssue"]:
                             self.state["status"] = "Codex setup needed"
                 self.emit()
             finally:
+                if action == "customServer":
+                    with self._lock:
+                        self.state["serverSaving"] = False
+                    self.emit()
                 if action == "send" or action == "job" and payload["command"] in ("set", "resume"):
                     with self._lock:
                         self._send_queued = False
@@ -607,25 +624,21 @@ class Controller:
                     self._commands.task_done()
 
     def _handle(self, action, payload):
-        if action == "ollamaServer":
+        if action == "customServer":
+            kind = payload["serverType"]
+            settings = self.ollama if kind == "ollama" else self.openai_compat
             secret = payload.pop("apiKey", None)
             try:
-                self.ollama.save(payload.get("host"), payload.get("port"), secret, bool(payload.get("clearApiKey")),
-                                 url=payload.get("url") or "")
+                save = settings.save_url if kind == "ollama" else settings.save
+                save(payload["baseUrl"], secret, bool(payload.get("clearApiKey")))
             finally:
                 secret = None
-            self._update_state({**self.ollama.public_state(), "error": ""})
-            if self.state["provider"] == "ollama":
-                self._reconnect("Ollama")
-        elif action == "openaiServer":
-            secret = payload.pop("apiKey", None)
-            try:
-                self.openai_compat.save(payload.get("baseUrl"), secret, bool(payload.get("clearApiKey")))
-            finally:
-                secret = None
-            self._update_state({**self.openai_compat.public_state(), "error": ""})
-            if self.state["provider"] == "openai":
-                self._reconnect("OpenAI-compatible")
+            self._update_state({**settings.public_state(), "error": ""})
+            if self.state["provider"] != kind:
+                if payload["selectServer"]:
+                    self._handle("provider", {"provider": kind})
+            else:
+                self._reconnect("custom server")
         elif action == 'restoreAfterUpdate':
             if (payload.get('threadId') and self.state['provider'] == payload.get('provider')
                     and self.state['account'] and self.state['account'] == payload.get('account')):
@@ -637,7 +650,8 @@ class Controller:
             self.provider_choice.save(payload.get("provider"))
             self.preferences = self.provider_choice.preferences()
             with self._lock:
-                self.state.update(provider=self.provider_choice.provider, account=None, models=[], model="", effort="", effortOptions=[])
+                self.state.update(provider=self.provider_choice.provider, customServerType=self.provider_choice.custom_provider,
+                                  account=None, models=[], model="", effort="", effortOptions=[])
             self._connect()
         elif action == 'acknowledgeReleaseNotes':
             self.release_notes.acknowledge(payload.get('version'))
@@ -891,10 +905,8 @@ class Controller:
                    "openrouter": self.openrouter_factory, "openai": self.openai_factory}.get(self.state["provider"], self.factory)
         client = factory(lambda method, params: self._notification(method, params) if self.client is client else None)
         self.client = client
-        if isinstance(client, OllamaTransport):
-            client.use(self.ollama)
-        if isinstance(client, OpenAICompatTransport):
-            client.use(self.openai_compat)
+        if isinstance(client, CustomServerTransport):
+            client.use(self.ollama if self.state["provider"] == "ollama" else self.openai_compat)
         client.debug = self.debug
         client.on_request = lambda request_id, method, params: self._tool_request(client, request_id, method, params)
         try:

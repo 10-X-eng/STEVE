@@ -202,6 +202,44 @@ const {chromium} = require('playwright');
     await page.setViewportSize({width: 436, height: 626});
     await page.locator('#app-menu-button').click();
     if(process.env.STEVE_MENU_SCREENSHOT) await page.screenshot({path: process.env.STEVE_MENU_SCREENSHOT});
+    await page.keyboard.press('Escape');
+    await send({provider: 'ollama', account: null, accountChecked: true, models: [],
+      ollamaBaseUrl: 'https://ollama.example/runner?think=false', ollamaApiKeySet: true,
+      openaiBaseUrl: 'https://responses.example/v1', openaiApiKeySet: false});
+    assert.deepEqual(await page.locator('#welcome-provider option').evaluateAll(options => options.map(o => o.value)),
+      ['chatgpt', 'grok', 'claude', 'openrouter', 'custom']);
+    assert.equal(await page.locator('#welcome-provider').inputValue(), 'custom');
+    await page.locator('#custom-server-welcome').click();
+    assert.equal(await page.locator('#server-type').inputValue(), 'ollama');
+    assert.equal(await page.locator('#server-url').inputValue(), 'https://ollama.example/runner?think=false');
+    await page.locator('#server-key').fill('do-not-transfer-this-draft');
+    await page.locator('#server-type').selectOption('openai');
+    assert.equal(await page.locator('#server-url').inputValue(), 'https://responses.example/v1');
+    assert.equal(await page.locator('#server-key').inputValue(), '');
+    assert.equal(await page.locator('#server-clear-row').isVisible(), false);
+    await page.locator('#server-url').fill('https://responses.example/v1?bad=query');
+    await page.locator('#server-save').click();
+    assert.equal(await page.locator('#server-error').isVisible(), true);
+    assert.equal(await page.locator('#server-dialog').isVisible(), true);
+    await page.locator('#server-url').fill('https://responses.example/v1');
+    await page.locator('#server-key').fill('fixture-key');
+    await page.locator('#server-save').click();
+    assert.equal(await page.locator('#server-dialog').isVisible(), false);
+    const save = await page.evaluate(() => window.testActions.filter(a => a.action === 'customServer').at(-1));
+    assert.deepEqual(JSON.parse(save.payload), {serverType:'openai', baseUrl:'https://responses.example/v1', clearApiKey:false, apiKey:'fixture-key'});
+    assert.equal(await page.locator('#server-key').inputValue(), '');
+    await send({provider:'openai', customServerType:'openai'});
+    await page.locator('#custom-server-welcome').click();
+    for(const width of [320, 436]) {
+      await page.setViewportSize({width, height:626});
+      const bounds = await page.locator('#server-dialog').boundingBox();
+      assert(bounds.x >= 0 && bounds.x + bounds.width <= width, `Server dialog overflows at ${width}`);
+      assert(await page.locator('#server-dialog').evaluate(el => el.scrollWidth <= el.clientWidth));
+    }
+    if(process.env.STEVE_SERVER_SCREENSHOT) await page.screenshot({path:process.env.STEVE_SERVER_SCREENSHOT});
+    await send({serverSaving:true});
+    assert.equal(await page.locator('#server-save').isDisabled(), true);
+    assert.equal(await page.locator('#server-type').isDisabled(), true);
     assert.deepEqual(errors, []);
     console.log('Menu checks passed: settings list and pages, keyboard/focus, back navigation, exclusive views, composer menu, chips, actions, busy guards and responsive layout.');
   } finally { await browser.close(); }

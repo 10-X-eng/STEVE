@@ -469,11 +469,12 @@ function renderControls() {
   $("transcript-older").hidden = !state.olderMessagesCount;
   $("transcript-latest").hidden = !state.showingOlderMessages;
   renderJob();
-  const connected=state.connection==="ready" && !state.codexRestarting;
+  const connected=state.connection==="ready" && !state.codexRestarting && !state.serverSaving;
   const local=state.provider==="ollama";
   const claude=state.provider==="claude";
   const openrouter=state.provider==="openrouter";
   const openai=state.provider==="openai";
+  const custom=local || openai;
   const signed=!!state.account && (!(local || claude || openai) || state.models.length>0);
   const hasMessages=state.messages.length>0 && signed;
   $("app").classList.toggle("signed-out",!signed);
@@ -483,8 +484,8 @@ function renderControls() {
   $("sign-in-card").hidden=signed;
   $("login").disabled=!connected || !state.accountChecked || state.loginPending;
   const grok=state.provider==="grok";
-  const providerName=local?"Ollama":grok?"Grok / X":claude?"Claude":openrouter?"OpenRouter":openai?"OpenAI-compatible":"ChatGPT";
-  for(const id of ["provider","welcome-provider"]){$(id).value=state.provider||"chatgpt";$(id).disabled=!!state.busy || !!state.jobBusy || !!state.loginPending || state.connection==="starting";}
+  const providerName=custom?"Custom server":grok?"Grok / X":claude?"Claude":openrouter?"OpenRouter":openai?"OpenAI-compatible":"ChatGPT";
+  for(const id of ["provider","welcome-provider"]){$(id).value=custom?"custom":state.provider||"chatgpt";$(id).disabled=!!state.serverSaving || !!state.busy || !!state.jobBusy || !!state.loginPending || state.connection==="starting";}
   $("login").textContent=claude?(!state.accountChecked?"Checking Claude Code…":"Check connection"):local?(!state.accountChecked?"Checking Ollama…":"Refresh models"):openai?(!state.accountChecked?"Checking server…":"Refresh models"):state.loginPending?"Signing in…":!state.accountChecked?"Checking your account…":grok?"Sign in with X / Grok ↗":openrouter?"Sign in with OpenRouter ↗":"Sign in with ChatGPT ↗";
   $("sign-in-heading").textContent=local?"Your tools. Your local model.":"Your tools. Your AI.";
   $("sign-in-description").textContent=claude?(state.localStatus||"Sign in to Claude Code outside Fusion, then check the connection here."):local?(state.localStatus||"Start Ollama and choose a downloaded model. No sign-in needed."):openai?(state.localStatus||"Set the server’s base URL and optional API key under Server."):"Connect your account and bring your thinking partner into Fusion.";
@@ -495,17 +496,13 @@ function renderControls() {
   $("openrouter-links").hidden=!openrouter;
   $("openrouter-controls").hidden=!openrouter || !signed;
   $("openrouter-refresh").disabled=state.busy || !!state.jobBusy || !connected;
-  $("openai-links").hidden=!openai;
-  $("openai-controls").hidden=!openai;
-  $("openai-status").textContent=state.localStatus||"Checking server…";
-  $("openai-refresh").disabled=state.busy || !!state.jobBusy || !connected;
-  syncOpenAIServer();
+  $("custom-links").hidden=!custom;
+  $("custom-controls").hidden=!custom;
+  $("custom-status").textContent=state.localStatus||"Checking server...";
+  $("custom-refresh").disabled=state.busy || !!state.jobBusy || !connected;
+  $("install-ollama").hidden=!local;
+  syncCustomServer();
   $("claude-refresh").disabled=state.busy || !connected;
-  $("local-controls").hidden=!local;
-  $("local-links").hidden=!local;
-  $("local-status").textContent=state.localStatus||"Checking local Ollama…";
-  $("local-refresh").disabled=state.busy || !connected;
-  syncOllamaServer();
   $("login-wait").hidden=!state.loginPending;
   $("grok-login-note").hidden=!grok || signed || !state.loginPending || !!state.device;
   $("device-login").hidden=local || claude || openrouter || openai || state.loginPending;
@@ -519,7 +516,7 @@ function renderControls() {
   $("dream").disabled=!canUseConcept("refine");
   $("composer-plus").disabled=!signed || !connected || restartingForUpdate;
   $("message").disabled=!signed || !connected || restartingForUpdate;
-  $("message").placeholder=signed?(state.busy?"Add a correction or steer STEVE…":"What are you working on?"):local?"Connect a local model to begin":"Sign in to start a conversation";
+  $("message").placeholder=signed?(state.busy?"Add a correction or steer STEVE…":"What are you working on?"):custom?"Connect a server to begin":"Sign in to start a conversation";
   const jobCommand = /^\/jobs(?:\s|$)/.test($("message").value.trim());
   $("send").disabled=!signed || !connected || (!$("message").value.trim() && !draftImages.length) || draftImages.some(item=>!item.url) || !!clipboardRequest || submitting || (state.busy && !state.canSteer && !jobCommand) || !!state.jobBusy;
   const selectedModel=state.models.find(m=>m.id===state.model) || state.models.find(m=>m.isDefault);
@@ -602,7 +599,7 @@ function renderControls() {
   const ollamaAddress=state.ollamaAddress||"127.0.0.1:11434";
   $("account-plan").textContent=local?`${ollamaAddress} · ${state.ollamaApiKeySet?"API key saved":"No sign-in needed"}`:openai?`${state.openaiBaseUrl||"No server set"} · ${state.openaiApiKeySet?"API key saved":"No API key"}`:signed?`${state.account.planType||providerName} · Connected`:`Use your ${providerName} account`;
   // Settings rows summarize each page so the list doubles as a status check.
-  $("row-account-value").textContent=local?`Ollama · ${ollamaAddress}`:`${providerName} · ${signed?(state.account?.email||"Connected"):"Not signed in"}`;
+  $("row-account-value").textContent=custom?`Custom server · ${local?"Ollama":"OpenAI-compatible"}`:`${providerName} · ${signed?(state.account?.email||"Connected"):"Not signed in"}`;
   const rmfgSummary={connected:"RMFG connected",authorizing:"RMFG connecting",reconnect:"RMFG needs reconnect"}[state.rmfgState]||"RMFG not connected";
   $("row-manufacturing-value").textContent=`DFM ${state.dfmEnabled?"on":"off"}${state.dfmEnabled?` · ${rmfgSummary}`:""}`;
   $("rmfg-badge").hidden=!state.dfmEnabled || state.rmfgState!=="reconnect";
@@ -765,65 +762,38 @@ function renderJob() {
   $("job-save").textContent = job ? "Save and start" : "Start job";
 }
 
-function syncOllamaServer() {
-  const locked=!!state.busy || !!state.jobBusy || state.job?.status==="active" || state.connection==="starting" || !!state.codexRestarting;
-  $("ollama-server").disabled=locked;
-  $("ollama-server-welcome").disabled=locked;
-  $("ollama-save").disabled=locked;
-  $("ollama-clear-row").hidden=!state.ollamaApiKeySet;
-  $("ollama-key-note").textContent=state.ollamaApiKeySet?"A key is saved on this computer. Leave the field blank to keep it, or remove it.":"Leave the key blank unless this server requires one.";
-  $("ollama-server").title=state.ollamaAddress?`Ollama server ${state.ollamaAddress}`:"Ollama host, port, and optional API key";
+function serverType() {
+  return $("server-dialog").open ? $("server-type").value : state.provider==="openai" ? "openai" : state.provider==="ollama" ? "ollama" : state.customServerType||"ollama";
 }
 
-function syncOpenAIServer() {
-  const locked=!!state.busy || !!state.jobBusy || state.job?.status==="active" || state.connection==="starting" || !!state.codexRestarting;
-  $("openai-server").disabled=locked;
-  $("openai-server-welcome").disabled=locked;
-  $("openai-save").disabled=locked;
-  $("openai-clear-row").hidden=!state.openaiApiKeySet;
-  $("openai-key-note").textContent=state.openaiApiKeySet?"A key is saved on this computer. Leave the field blank to keep it, or remove it.":"Leave the key blank unless this server requires one.";
+function syncCustomServer() {
+  const locked=!!state.busy || !!state.jobBusy || !!state.serverSaving || !!state.loginPending || state.job?.status==="active" || state.connection==="starting" || !!state.codexRestarting;
+  for(const id of ["custom-server","custom-server-welcome","server-save","server-type","server-url","server-key","server-clear-key"]) $(id).disabled=locked;
+  const local=serverType()==="ollama";
+  const keySet=local?state.ollamaApiKeySet:state.openaiApiKeySet;
+  $("server-clear-row").hidden=!keySet;
+  $("server-key-note").textContent=keySet?"A key is saved for this server type. Leave blank to keep it, or remove it.":"Leave the key blank unless this server requires one.";
+  $("server-url-note").textContent=local?"Use the Ollama root URL, usually http://127.0.0.1:11434. Path prefixes and gateway queries such as ?think=false are supported. HTTPS is supported.":"Include the API path, usually /v1. The server must support the Responses API and tool calling. Use HTTPS for remote servers.";
+  $("server-save").textContent=state.serverSaving?"Connecting...":"Save server";
 }
 
-function openOpenAIServer() {
+function loadServerFields() {
+  const local=$("server-type").value==="ollama";
+  $("server-url").value=local?(state.ollamaBaseUrl||`http://${state.ollamaAddress||"127.0.0.1:11434"}`):(state.openaiBaseUrl||"");
+  $("server-url").placeholder=local?"http://127.0.0.1:11434":"http://127.0.0.1:1234/v1";
+  $("server-key").value="";
+  $("server-clear-key").checked=false;
+  $("server-error").hidden=true;
+  syncCustomServer();
+}
+
+function openCustomServer() {
   showSettings(false);
-  $("openai-url").value=state.openaiBaseUrl||"";
-  $("openai-key").value="";
-  $("openai-clear-key").checked=false;
-  syncOpenAIServer();
-  const dialog=$("openai-dialog");
+  $("server-type").value=state.provider==="openai"?"openai":state.provider==="ollama"?"ollama":state.customServerType||"ollama";
+  const dialog=$("server-dialog");
   if(!dialog.open && typeof dialog.showModal==="function") dialog.showModal();
-  if(typeof $("openai-url").focus==="function") $("openai-url").focus();
-}
-
-function readOllamaForm() {
-  const host=String($("ollama-host").value||"").trim();
-  const portText=String($("ollama-port").value??"").trim();
-  const url=String($("ollama-url").value||"").trim();
-  if(!host || /\s|[/\\]/.test(host) || host.includes("://")) throw new Error("Enter a host name or IP address, and put the port in the port field.");
-  if(url.includes("://") || /\s/.test(url)) throw new Error("Enter a path or query, such as /ollama or ?think=false. Host and port stay in their own fields.");
-  if(url && !url.startsWith("/") && !url.startsWith("?")) throw new Error("Start the URL path with / or ?, such as /ollama or ?think=false.");
-  let port=null;
-  if(portText){
-    if(!/^[0-9]+$/.test(portText) || Number(portText)<1 || Number(portText)>65535) throw new Error("Enter a port from 1 to 65535, or leave it blank for 11434.");
-    port=Number(portText);
-  }
-  const payload={host, port, url, clearApiKey:!!$("ollama-clear-key").checked};
-  const apiKey=$("ollama-key").value;
-  if(!payload.clearApiKey && apiKey) payload.apiKey=apiKey;
-  return payload;
-}
-
-function openOllamaServer() {
-  showSettings(false);
-  $("ollama-host").value=state.ollamaHost||"127.0.0.1";
-  $("ollama-port").value=state.ollamaPort?String(state.ollamaPort):"";
-  $("ollama-url").value=state.ollamaUrl||"";
-  $("ollama-key").value="";
-  $("ollama-clear-key").checked=false;
-  syncOllamaServer();
-  const dialog=$("ollama-dialog");
-  if(!dialog.open && typeof dialog.showModal==="function") dialog.showModal();
-  if(typeof $("ollama-host").focus==="function") $("ollama-host").focus();
+  loadServerFields();
+  if(typeof $("server-url").focus==="function") $("server-url").focus();
 }
 
 function openJob(edit = false) {
@@ -887,39 +857,31 @@ $("job-form").onsubmit=(event)=>{
   try { act("job",{command:"set",objective:$("job-objective").value.trim(),tokenBudget:jobBudget()}); $("job-dialog").close(); }
   catch(error) { state.error=error.message; $("job-dialog").close(); render(); }
 };
-$("local-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
+$("custom-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
 $("install-ollama").onclick=()=>act("setupHelp",{page:"ollama"});
-$("local-help").onclick=$("local-setup").onclick=()=>act("setupHelp",{page:"local"});
-$("ollama-server").onclick=$("ollama-server-welcome").onclick=()=>openOllamaServer();
-$("ollama-close").onclick=()=>$("ollama-dialog").close();
-$("ollama-form").onsubmit=(event)=>{
+$("custom-help").onclick=$("custom-setup").onclick=()=>act("setupHelp",{page:"local"});
+$("custom-server").onclick=$("custom-server-welcome").onclick=()=>openCustomServer();
+$("server-close").onclick=()=>$("server-dialog").close();
+$("server-type").onchange=()=>loadServerFields();
+$("server-dialog").onclose=()=>{$("server-key").value="";};
+$("server-form").onsubmit=async(event)=>{
   event.preventDefault();
-  let payload;
-  try { payload=readOllamaForm(); }
-  catch(error) { state.error=error.message; dismissedError=""; render(); return; }
-  return bridge("ollamaServer", payload).then(()=>{
-    $("ollama-key").value="";
-    $("ollama-clear-key").checked=false;
-    const dialog=$("ollama-dialog");
-    if(typeof dialog.close==="function") dialog.close();
-  }).catch((error)=>{ state.error=error.message; dismissedError=""; render(); });
-};
-$("openai-refresh").onclick=()=>act("accountRefresh",{refreshModels:true});
-$("openai-server").onclick=$("openai-server-welcome").onclick=()=>openOpenAIServer();
-$("openai-close").onclick=()=>$("openai-dialog").close();
-$("openai-form").onsubmit=(event)=>{
-  event.preventDefault();
-  const baseUrl=String($("openai-url").value||"").trim();
-  if(!/^https?:\/\/[^\s@?#]+$/i.test(baseUrl)){ state.error="Enter the server's base URL, such as http://127.0.0.1:1234/v1."; dismissedError=""; render(); return; }
-  const payload={baseUrl, clearApiKey:!!$("openai-clear-key").checked};
-  const apiKey=$("openai-key").value;
-  if(!payload.clearApiKey && apiKey) payload.apiKey=apiKey;
-  return bridge("openaiServer", payload).then(()=>{
-    $("openai-key").value="";
-    $("openai-clear-key").checked=false;
-    const dialog=$("openai-dialog");
-    if(typeof dialog.close==="function") dialog.close();
-  }).catch((error)=>{ state.error=error.message; dismissedError=""; render(); });
+  const baseUrl=String($("server-url").value||"").trim();
+  const kind=$("server-type").value;
+  try {
+    const url=new URL(baseUrl);
+    if(!/^https?:$/.test(url.protocol) || url.username || url.password || url.hash || /\s|\\/.test(baseUrl) || (kind==="openai" && url.search)) throw new Error("Enter an HTTP or HTTPS server URL without credentials or a fragment. OpenAI-compatible URLs cannot include a query.");
+    const payload={serverType:kind,baseUrl,clearApiKey:!!$("server-clear-key").checked};
+    if(!payload.clearApiKey && $("server-key").value) payload.apiKey=$("server-key").value;
+    const result=await bridge("customServer",payload);
+    if(result?.accepted===false) throw new Error("Wait for the current work to finish before saving the server.");
+    $("server-key").value="";
+    $("server-clear-key").checked=false;
+    $("server-dialog").close();
+  } catch(error) {
+    $("server-error").textContent=error.message;
+    $("server-error").hidden=false;
+  }
 };
 $("device-login").onclick=()=>act("deviceLogin");
 $("cancel-login").onclick=()=>act("cancelLogin");

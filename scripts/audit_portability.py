@@ -21,6 +21,8 @@ def source_files():
     for directory, subdirs, files in os.walk(ROOT):
         subdirs[:] = [name for name in subdirs if name not in EXCLUDED]
         for name in files:
+            if name in EXCLUDED:  # Git worktrees use a .git file rather than a directory.
+                continue
             path = Path(directory) / name
             if path.suffix not in {".pyc", ".pyo"}:
                 yield path

@@ -527,7 +527,7 @@ class ControllerTests(unittest.TestCase):
             self.controller.dispatch("ollamaServer", {"host": "http://10.0.0.8", "port": 80})
         self.controller.dispatch("send", {"text": "Inspect this document"})
         eventually(lambda: self.controller.turn_id is not None)
-        with self.assertRaisesRegex(ValueError, "Ollama server"):
+        with self.assertRaisesRegex(ValueError, "changing the server"):
             self.controller.dispatch("ollamaServer", {"host": "10.0.0.8", "port": 11435, "apiKey": "secret-token"})
         self.client.complete()
         eventually(lambda: not self.controller.state["busy"])

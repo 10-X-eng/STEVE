@@ -41,6 +41,8 @@ Open a design and start with: **“Inspect this document and summarize its compo
 
 A running task keeps its starting document and selection. If you switch documents, pending Fusion calls wait until you return. There is one active conversation per Fusion instance.
 
+You can **Resume** a paused job while a response or tool is running. The current work finishes before automatic continuation. If that response targets a different document, STEVE shows **Resume requested** and restores the job's original document and selection when idle. **Stop** cancels a pending resume.
+
 ## Claude subscription (experimental)
 
 1. Install the official [Claude Code client](https://code.claude.com/docs/en/setup) for your computer.

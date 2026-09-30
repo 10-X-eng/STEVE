@@ -86,6 +86,8 @@ class StateEvent(adsk.core.CustomEventHandler):
             if clipboard is not None:
                 _clipboard_busy = False
             _event_pending = False
+        if _controller and _fusion_tools and state and state.get('jobResumePending'):
+            _controller.resume_pending_job(_fusion_tools.message_context)
         if state and _palette and _palette.isValid:
             try:
                 _palette.sendInfoToHTML("state", json.dumps(state, ensure_ascii=False))

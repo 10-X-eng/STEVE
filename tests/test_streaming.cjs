@@ -124,7 +124,12 @@ const runChecks = async () => {
       check(jobCalls.some(c=>c.action==='job' && c.payload.command==='pause'), 'Pause was sent as model text');
       snapshot.job.status='paused'; send(); await frame();
       check(document.getElementById('job-pause').hidden, 'Paused jobs must not offer Pause again');
-      check(document.getElementById('job-resume').disabled && !document.getElementById('job-wait-note').hidden, 'A finishing response must explain why Resume waits');
+      check(!document.getElementById('job-resume').disabled && !document.getElementById('job-wait-note').hidden, 'Resume must be available during a running response');
+      document.getElementById('job-resume').click(); await frame();
+      check(jobCalls.at(-1).payload.command==='resume', 'Busy Resume did not reach the controller');
+      snapshot.jobResumePending=true; send(); await frame();
+      check(document.getElementById('job-resume').disabled && document.getElementById('job-resume').textContent==='Resume requested', 'Deferred resume must acknowledge the request and prevent duplicates');
+      snapshot.jobResumePending=false;
       snapshot.busy=false; snapshot.job.status='paused'; send(); await frame();
       check(!document.getElementById('job-resume').disabled && document.getElementById('job-wait-note').hidden, 'Idle paused jobs must expose Resume');
       snapshot.dfmEnabled=true; snapshot.rmfgState='connected';
